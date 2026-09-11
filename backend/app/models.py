@@ -39,6 +39,7 @@ class PaperPortfolio(Base):
     variant_id: Mapped[int] = mapped_column(ForeignKey("variants.id"), unique=True, index=True)
     initial_cash: Mapped[float] = mapped_column(Float, default=100_000.0)
     cash: Mapped[float] = mapped_column(Float, default=100_000.0)
+    broker: Mapped[str] = mapped_column(String(20), default="sim")  # sim | alpaca_paper — resolved by app/paper/brokers.py
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     variant: Mapped[Variant] = relationship(back_populates="portfolio")
@@ -58,8 +59,16 @@ class Position(Base):
 
 
 class PaperOrder(Base):
-    """Lifecycle: proposed -> filled | rejected. Fill simulation applies slippage and
-    a modeled bid-ask spread, and can produce a partial fill — see app/paper/broker.py."""
+    """Lifecycle: proposed -> open -> filled | partial_fill | cancelled | rejected.
+
+    `open` exists because an order is not always resolved the moment it is
+    submitted: a limit that has not crossed yet stays open, and an external
+    broker answers asynchronously. The poller (app/monitor/scheduler.py)
+    re-evaluates open orders and settles them through the same
+    app/paper/settlement.apply_fill as an immediate fill.
+
+    Fill simulation applies slippage and a modeled bid-ask spread, and can
+    produce a partial fill — see app/paper/broker.py."""
     __tablename__ = "paper_orders"
     id: Mapped[int] = mapped_column(primary_key=True)
     portfolio_id: Mapped[int] = mapped_column(ForeignKey("paper_portfolios.id"), index=True)
@@ -72,6 +81,9 @@ class PaperOrder(Base):
     rationale: Mapped[str] = mapped_column(Text, default="")
     realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)  # set on sell fills; drives hit-rate/profit-factor
     status: Mapped[str] = mapped_column(String(20), default="proposed", index=True)
+    broker: Mapped[str] = mapped_column(String(20), default="sim")
+    broker_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)  # set on sells opened by app/paper/exits.py
     filled_qty: Mapped[float] = mapped_column(Float, default=0.0)
     filled_avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     requested_price: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -128,6 +140,21 @@ class SystemState(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     kill_switch_engaged: Mapped[bool] = mapped_column(Boolean, default=False)
     kill_switch_reason: Mapped[str] = mapped_column(String(255), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class AppSetting(Base):
+    """Runtime-editable settings, edited from the Administration panel.
+
+    Layered over the environment: app/core/settings_store.py reads the env
+    default first and lets a row here override it, so a fresh install works
+    with no rows at all and nothing here is required to boot. Secrets are
+    stored in `value` but never returned in clear text by the API — see
+    settings_store.public_view().
+    """
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)  # {"v": <any>} — JSON column needs a container
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 

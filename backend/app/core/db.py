@@ -40,6 +40,10 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_column("decision_log", "explanation_source", "TEXT DEFAULT 'template'")
     _ensure_column("variants", "scaled", "BOOLEAN DEFAULT 0")
+    _ensure_column("paper_portfolios", "broker", "TEXT DEFAULT 'sim'")
+    _ensure_column("paper_orders", "broker", "TEXT DEFAULT 'sim'")
+    _ensure_column("paper_orders", "broker_order_id", "TEXT")
+    _ensure_column("paper_orders", "exit_reason", "TEXT")
 
 
 def get_db() -> Generator[Session, None, None]:

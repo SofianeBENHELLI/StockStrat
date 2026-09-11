@@ -238,6 +238,67 @@ pouvoir lancer les deux en parallèle sans conflit de port.
   après les corrections ci-dessus (avant : +85 % gonflé par le bug de scale ; après :
   +15 % avec un Sharpe ~1.2, cohérent avec une stratégie momentum réelle).
 
+### Boucle d'exécution : sorties, port broker, monitor (terminé)
+
+- **Le trou de départ** : rien dans `app/` ne vendait jamais. Un `grep '"sell"'` hors tests ne
+  renvoyait rien, et la seule voie de vente était le formulaire manuel de la page variante.
+  Conséquences, toutes vérifiées en base : `PaperOrder.realized_pnl` jamais renseigné, donc
+  `hit_rate_pct` et `profit_factor` définitivement `null` sur toutes les variantes ; le seuil
+  tue/renforce de `cycle.py` conditionné au nombre de trades *clôturés*, donc bloqué à 0 pour
+  toujours (le bug déjà corrigé côté backtest, laissé ouvert en direct) ; et du cash qui ne
+  faisait que décroître jusqu'à ce qu'une variante ne puisse plus trader. Le tournoi en direct
+  était structurellement incapable de boucler son propre cycle.
+- **Règles de sortie** (`app/paper/exits.py`) : stop, objectif, horloge — volontairement bêtes.
+  Ce n'est pas une stratégie et ça n'essaie pas de l'être : les trois moteurs décident quoi
+  acheter, ceci décide seulement quand arrêter de le détenir. Les seuils viennent du panneau
+  d'administration, et la raison de chaque sortie est écrite sur l'ordre (`exit_reason`) pour
+  que le journal reste auditable. Un symbole sans prix frais est laissé tranquille — sortir sur
+  un prix absent serait la pire raison de vendre. Le seuil tue/renforce compte désormais les
+  *fills* et non les trades clôturés, alignant le direct sur le backtest.
+- **Port broker** (`app/paper/brokers.py`) : `submit` / `poll` / `cancel` renvoyant un objet
+  valeur. Trois choix qui ne coûtent rien maintenant et évitent une réécriture plus tard : le
+  `market_price` est injecté et jamais récupéré par le broker (c'est déjà ce qui permet au
+  backtest de rejouer des fills à une date passée) ; un rejet est une valeur de retour, pas une
+  exception, seule une *configuration* invalide lève ; et le broker ne détient aucun état —
+  `SimBroker` est sans mémoire, l'état vit en base, donc un redémarrage ne perd rien.
+  `simulate_fill` est conservé tel quel : son spread/slippage/fills partiels sont plus riches
+  que ce qu'un simulateur écrit de zéro aurait donné.
+- **Cycle de vie réel des ordres** : le statut `open` existe enfin. Une limite non franchie
+  reste posée au lieu d'être rejetée, et le poller la réévalue contre un prix frais. `cancel`
+  existe. Les ordres se règlent tous par la même fonction `app/paper/settlement.apply_fill`,
+  idempotente — deux écrivains (une requête HTTP et la boucle de fond) peuvent atteindre la
+  même ligne, et un double règlement compterait silencieusement une position deux fois.
+- **Bug corrigé au passage** : l'affordabilité était vérifiée *pendant* l'application du fill,
+  c'est-à-dire après exécution. Sans conséquence face à un simulateur qu'on peut faire oublier,
+  mais face à un vrai venue cela signifie que le trade a eu lieu et que le livre a refusé de
+  l'enregistrer. Tous les garde-fous (kill-switch, cash, plafond de notionnel, quantité détenue)
+  passent maintenant avant l'appel au broker. Second bug : la ligne `Position` étant réutilisée,
+  rouvrir un symbole déjà soldé conservait l'`opened_at` d'origine — la sortie sur durée aurait
+  clôturé une position neuve dès le premier jour.
+- **Monitor** (`app/monitor/scheduler.py`) : une boucle asyncio, un passage par intervalle, sur
+  chaque portefeuille de variante active — sonde les ordres posés, applique les sorties,
+  enregistre l'équité. Ce troisième point n'est pas de la comptabilité : Sharpe, Sortino et
+  drawdown se calculent sur l'espacement des snapshots, et n'enregistrer l'équité que quand
+  quelqu'un clique donne une série ni quotidienne ni régulière — la même classe d'erreur que le
+  Sharpe de 9.4 d'un premier brouillon de backtest. Isolation par portefeuille : un symbole
+  impossible à valoriser ne doit pas empêcher les treize autres d'être marqués.
+- **Panneau d'administration** (`/settings`, `app/routers/settings.py`) : le schéma des réglages
+  est *servi*, pas codé en dur dans le frontend — ajouter un réglage est une entrée dans
+  `app/core/settings_store.FIELDS` et rien d'autre. Les valeurs de l'environnement restent les
+  défauts et une ligne en base les surcharge, donc une installation neuve démarre sans aucune
+  ligne. Les secrets sont en écriture seule à travers l'API : on peut poser une clé, jamais la
+  relire (`public_view()` ne renvoie que « configuré » et les 4 derniers caractères). Le
+  `trading_mode` reste une constante `paper`, qu'aucune route ne peut modifier.
+- **Limite assumée** : le simulateur ne vérifie toujours pas les heures de marché, et les
+  structures d'options restent exécutées en proxy sur le sous-jacent (cf. limite phase 2) —
+  deux points qui devront être tranchés avant de router quoi que ce soit vers un vrai venue.
+- **Vérifié en direct** : `uv run pytest` (67 tests, contre 33 avant) verts ; vente manuelle
+  exécutée contre yfinance réel, faisant passer `n_closed_trades` de 0 à 1 et `hit_rate_pct` /
+  `profit_factor` de `null` à une valeur ; limite non franchie observée au statut `open` puis
+  poller la laissant en place, limite franchissable remplie immédiatement ; plafond de notionnel
+  et vente à découvert refusés avant tout appel broker ; monitor tournant sur les 14
+  portefeuilles en ~1.5 s par passage.
+
 ## Lancer en local
 
 ### Backend (FastAPI, port 8001)
@@ -268,6 +329,22 @@ uv run pytest
 
 ## Prochaines phases
 
-Les 5 phases de la spec initiale sont terminées. Aucune phase 6 n'est définie pour
-l'instant — pistes envisagées en cours de route : flux fondamentaux/news temporel réel
+Les 5 phases de la spec initiale sont terminées, ainsi que la boucle d'exécution
+(sorties, port broker, monitor, panneau d'administration).
+
+**Phase 3 du plan d'exécution — connexion Alpaca paper — non faite.** Le port broker
+l'attend : `AlpacaPaperBroker` est déclaré et refuse explicitement de se construire,
+et les champs d'identifiants existent dans le panneau, marqués indisponibles. Ce qui
+reste à trancher avant de router quoi que ce soit vers Alpaca :
+
+- **Un compte, quatorze portefeuilles.** Un compte Alpaca a un livre de positions unique
+  et nette les positions : deux variantes longues sur MSFT n'en font qu'une, et
+  l'attribution par variante redevient synthétique — ce que le simulateur fait déjà mieux
+  et gratuitement. La piste retenue est de ne promouvoir qu'une seule variante championne
+  vers le venue, les treize autres restant en `sim`.
+- **Réconciliation.** Comparer périodiquement le livre local aux positions du venue. Absent
+  de la spec d'origine, indispensable ici.
+- **Heures de marché et structures d'options**, cf. limites ci-dessus.
+
+Autres pistes envisagées en cours de route : flux fondamentaux/news temporel réel
 (voir Phase 4), univers élargi pour Casino/Economist.

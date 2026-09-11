@@ -18,6 +18,7 @@ from functools import lru_cache
 
 from pydantic import BaseModel
 
+from app.core import settings_store
 from app.core.config import get_settings
 from app.strategies.base import TradeIdea
 
@@ -51,14 +52,39 @@ class TradeExplanation(BaseModel):
     main_risk: str
 
 
+def _api_key() -> str | None:
+    """The key the Administration panel is showing, which may be a database
+    override of the `.env` value. Resolved per call (a SQLite read) rather than
+    cached at import, so saving a key in the panel takes effect immediately
+    instead of at the next restart. If the settings table is not reachable for
+    any reason, fall back to the environment — a missing key already has a
+    defined behaviour here (templated text), and a settings lookup must never
+    be the thing that breaks explanations."""
+    try:
+        from app.core.db import SessionLocal
+
+        db = SessionLocal()
+        try:
+            return settings_store.resolve(db, "connections.anthropic_api_key")
+        finally:
+            db.close()
+    except Exception:
+        return get_settings().anthropic_api_key
+
+
 @lru_cache
-def _client():
-    settings = get_settings()
-    if not settings.anthropic_api_key:
+def _client_for(api_key: str | None):
+    """Cached per key so a client is not rebuilt on every explanation, and so
+    changing the key in the panel builds a new one rather than reusing the old."""
+    if not api_key:
         return None
     import anthropic
 
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    return anthropic.Anthropic(api_key=api_key)
+
+
+def _client():
+    return _client_for(_api_key())
 
 
 def _idea_context(idea: TradeIdea) -> str:

@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./strategy_tournament.db"
     market_data_provider: str = "yfinance"  # yfinance | mock
     cors_origins: list[str] = ["http://localhost:3001"]
+    quote_refresh_seconds: int = 60  # default period of the monitor loop (app/monitor/scheduler.py)
     tiingo_api_key: str | None = None  # optional, paid — real fundamentals (app/data/fundamentals.py)
     anthropic_api_key: str | None = None  # optional — agentic trade explanations (app/agent/explain.py)
 

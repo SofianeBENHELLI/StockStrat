@@ -35,7 +35,14 @@ def _deterministic_unit(seed: str) -> float:
 def simulate_fill(
     *, symbol: str, side: str, qty: float, order_type: str,
     limit_price: float | None, market_price: float | None, order_id: int,
+    unfilled_limit_status: str = "rejected",
 ) -> FillResult:
+    """`unfilled_limit_status` is what a limit order that has not crossed yet
+    resolves to. It defaults to "rejected", which is the original single-shot
+    behaviour the historical backtest relies on (app/backtest/engine.py places
+    market orders only, so it never reaches this path). The live path passes
+    "open" instead, leaving the order resting for the poller to re-evaluate
+    against a fresh price — see app/paper/brokers.py."""
     if market_price is None or market_price <= 0:
         return FillResult("rejected", 0.0, None, 0.0, 0.0, detail="no market price available")
     if qty <= 0:
@@ -55,7 +62,7 @@ def simulate_fill(
             return FillResult("rejected", 0.0, None, 0.0, 0.0, detail="limit order without limit price")
         crosses = quoted_price <= limit_price if side == "buy" else quoted_price >= limit_price
         if not crosses:
-            return FillResult("rejected", 0.0, None, spread_bps, 0.0, detail="limit not reached")
+            return FillResult(unfilled_limit_status, 0.0, None, spread_bps, 0.0, detail="limit not reached")
 
     # slippage: bigger orders move the price more against the trader
     size_factor = min(qty / 500.0, 1.0)

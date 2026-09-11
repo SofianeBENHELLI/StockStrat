@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.data.provider import latest_prices
-from app.models import DecisionLog, PaperOrder, PaperPortfolio, Variant
-from app.paper import accounting
-from app.paper.service import OrderRejected, submit_order
+from app.models import DecisionLog, PaperOrder, PaperPortfolio, Position, Variant
+from app.paper import accounting, exits
+from app.paper.service import OrderRejected, cancel_order, poll_open_orders, submit_order
 
 router = APIRouter(prefix="/api/variants", tags=["variants"])
 
@@ -91,6 +91,8 @@ def variant_orders(variant_id: int, db: Session = Depends(get_db)) -> list[dict]
         "status": o.status, "filled_qty": o.filled_qty, "filled_avg_price": o.filled_avg_price,
         "requested_price": o.requested_price, "slippage_bps": o.slippage_bps, "spread_bps": o.spread_bps,
         "max_loss": o.max_loss, "rationale": o.rationale, "created_at": o.created_at.isoformat(),
+        "broker": o.broker, "broker_order_id": o.broker_order_id, "exit_reason": o.exit_reason,
+        "realized_pnl": o.realized_pnl,
     } for o in orders]
 
 
@@ -109,6 +111,48 @@ def place_order(variant_id: int, body: OrderIn, db: Session = Depends(get_db)) -
         "id": order.id, "status": order.status, "filled_qty": order.filled_qty,
         "filled_avg_price": order.filled_avg_price, "slippage_bps": order.slippage_bps,
         "spread_bps": order.spread_bps,
+    }
+
+
+@router.post("/{variant_id}/orders/{order_id}/cancel")
+def cancel(variant_id: int, order_id: int, db: Session = Depends(get_db)) -> dict:
+    _, portfolio = _get_variant_portfolio(db, variant_id)
+    order = db.get(PaperOrder, order_id)
+    if order is None or order.portfolio_id != portfolio.id:
+        raise HTTPException(status_code=404, detail="order not found for this variant")
+    try:
+        order = cancel_order(db, order)
+    except OrderRejected as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"id": order.id, "status": order.status}
+
+
+@router.post("/{variant_id}/poll")
+def poll(variant_id: int, db: Session = Depends(get_db)) -> dict:
+    """Re-check this variant's resting orders against fresh prices."""
+    _, portfolio = _get_variant_portfolio(db, variant_id)
+    changed = poll_open_orders(db, portfolio)
+    return {"resolved": [{"id": o.id, "symbol": o.symbol, "status": o.status} for o in changed]}
+
+
+@router.get("/{variant_id}/exits")
+def exit_preview(variant_id: int, db: Session = Depends(get_db)) -> dict:
+    """What the exit rules would close right now, without closing anything.
+    Lets the Administration panel's thresholds be judged before they fire."""
+    _, portfolio = _get_variant_portfolio(db, variant_id)
+    held = list(db.scalars(select(Position.symbol).where(
+        Position.portfolio_id == portfolio.id, Position.qty > 0)))
+    prices = {s: q.price for s, q in latest_prices(held).items()} if held else {}
+    rules = exits.ExitRules.from_settings(db)
+    return {
+        "rules": {
+            "enabled": rules.enabled, "stop_loss_pct": rules.stop_loss_pct,
+            "take_profit_pct": rules.take_profit_pct, "max_holding_days": rules.max_holding_days,
+        },
+        "would_exit": [
+            {"symbol": d.symbol, "qty": d.qty, "reason": d.reason, "detail": d.detail}
+            for d in exits.evaluate(db, portfolio, prices, rules=rules)
+        ],
     }
 
 

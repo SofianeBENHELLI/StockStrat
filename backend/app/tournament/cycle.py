@@ -7,8 +7,16 @@ mean anything; testing this in a single session only ever produces same-day
 snapshots, so those ratios stay at 0 until the tournament has actually run for
 a few days. total_pnl_pct is used as the practical ranking signal until then —
 that's a real limitation of short history, not a bug, and it's why kill/scale
-also require a minimum number of CLOSED trades before acting on a variant, so
-a lucky/unlucky first trade can't kill or scale something on pure noise.
+also require a minimum number of trades before acting on a variant, so a
+lucky/unlucky first trade can't kill or scale something on pure noise.
+
+That minimum counts FILLS, not closed trades. It used to count closed ones,
+which was the same bug the backtest engine hit and fixed on its side only:
+nothing in the live app ever sold, so the closed-trade counter sat at zero
+forever and kill/scale never fired at all. Exits now exist (app/paper/exits.py)
+so positions do close, but the threshold still counts fills — a variant that
+has committed capital three times has shown enough to be judged, whether or
+not the clock has run out on those positions yet.
 
 'Spawn a new variant from a winner' is implemented as capital-scaling by
 cloning a winning variant's exact config into a fresh portfolio — not
@@ -28,7 +36,6 @@ subsidy. `Variant.scaled` now gates it to once.
 """
 from __future__ import annotations
 
-import math
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -37,14 +44,14 @@ from sqlalchemy.orm import Session
 from app.agent.explain import resolve_explanation
 from app.data.provider import latest_prices
 from app.models import CycleRun, DecisionLog, PaperOrder, PaperPortfolio, Position, Variant
-from app.paper import accounting
-from app.paper.service import OrderRejected, submit_order
+from app.paper import accounting, exits
+from app.paper.service import OrderRejected, affordable_qty, poll_open_orders, submit_order
 from app.strategies import casino, economist, ml_baseline
 from app.strategies.base import TradeIdea
 
 ENGINES = {"casino": casino, "ml": ml_baseline, "economist": economist}
 
-MIN_TRADES_TO_JUDGE = 3       # don't kill/scale on a tiny, noisy sample
+MIN_TRADES_TO_JUDGE = 3       # don't kill/scale on a tiny, noisy sample — counted in FILLS, see run_cycle
 KILL_THRESHOLD_PCT = -8.0     # total P&L vs initial cash
 SCALE_THRESHOLD_PCT = 5.0
 SCALE_CASH_BOOST_PCT = 0.10   # +10% of initial cash added to a scaled variant
@@ -62,7 +69,7 @@ def run_cycle(db: Session) -> CycleRun:
     db.commit()
     db.refresh(run)
 
-    detail: dict = {"proposed": [], "killed": [], "scaled": [], "spawned": [], "errors": []}
+    detail: dict = {"proposed": [], "exits": [], "killed": [], "scaled": [], "spawned": [], "errors": []}
     active = list(db.scalars(select(Variant).where(Variant.status == "active")))
 
     for variant in active:
@@ -72,7 +79,7 @@ def run_cycle(db: Session) -> CycleRun:
     leaderboard.sort(key=lambda r: -r["total_pnl_pct"])
 
     for row in leaderboard:
-        if row["n_closed_trades"] < MIN_TRADES_TO_JUDGE:
+        if row["n_fills"] < MIN_TRADES_TO_JUDGE:
             continue
         variant = db.get(Variant, row["variant_id"])
         if row["total_pnl_pct"] <= KILL_THRESHOLD_PCT:
@@ -93,6 +100,7 @@ def run_cycle(db: Session) -> CycleRun:
     run.detail = detail
     run.summary = (
         f"{len(detail['proposed'])} ordres proposés sur {len(active)} variantes actives, "
+        f"{len(detail.get('exits', []))} positions sorties, "
         f"{len(detail['killed'])} tuées, {len(detail['scaled'])} scalées, "
         f"{len(detail['spawned'])} nouvelles variantes générées."
     )
@@ -105,6 +113,23 @@ def _propose_and_execute(db: Session, variant: Variant, detail: dict) -> None:
     portfolio = variant.portfolio
     if portfolio is None:
         return
+
+    # Housekeeping before new ideas, in this order on purpose: resting orders
+    # may fill (changing what is held), then exits may close positions (freeing
+    # cash and realising P&L) — both of which change what this cycle can afford
+    # and what it would consider a duplicate holding.
+    poll_open_orders(db, portfolio)
+    held_symbols = list(db.scalars(select(Position.symbol).where(
+        Position.portfolio_id == portfolio.id, Position.qty > 0)))
+    if held_symbols:
+        exit_prices = {s: q.price for s, q in latest_prices(held_symbols).items()}
+        for order in exits.apply(db, portfolio, exit_prices):
+            detail.setdefault("exits", []).append({
+                "variant": variant.name, "symbol": order.symbol, "qty": order.qty,
+                "reason": order.exit_reason, "status": order.status,
+                "realized_pnl": order.realized_pnl,
+            })
+
     try:
         module = ENGINES[variant.engine]
         ideas: list[TradeIdea] = module.generate_ideas(limit=5, variant_key=variant.variant_key or None)
@@ -124,7 +149,7 @@ def _propose_and_execute(db: Session, variant: Variant, detail: dict) -> None:
         if quote is None:
             continue
         budget = round(portfolio.cash * idea.size_pct_of_equity, 2)
-        qty = math.floor(budget / quote.price)
+        qty = affordable_qty(portfolio, budget, quote.price)
         if qty < 1:
             continue
         try:
@@ -165,7 +190,8 @@ def _score_all(db: Session, variants: list[Variant]) -> list[dict]:
         rows.append({
             "variant_id": variant.id, "name": variant.name, "engine": variant.engine,
             "variant_key": variant.variant_key, "total_pnl_pct": s["total_pnl_pct"],
-            "sharpe": s["sharpe"], "n_closed_trades": s["n_closed_trades"], "hit_rate_pct": s["hit_rate_pct"],
+            "sharpe": s["sharpe"], "n_fills": s["n_trades"], "n_closed_trades": s["n_closed_trades"],
+            "hit_rate_pct": s["hit_rate_pct"],
         })
     return rows
 

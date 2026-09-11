@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Compass, Dices, History, LayoutDashboard, type LucideIcon, Sigma } from "lucide-react";
+import { Compass, Dices, History, LayoutDashboard, type LucideIcon, Settings, Sigma } from "lucide-react";
 
 const NAV: { section: string; items: { href: string; label: string; Icon: LucideIcon }[] }[] = [
   {
@@ -19,6 +19,10 @@ const NAV: { section: string; items: { href: string; label: string; Icon: Lucide
       { href: "/strategies/ml", label: "Le Matheux", Icon: Sigma },
       { href: "/strategies/economist", label: "Le Stratège", Icon: Compass },
     ],
+  },
+  {
+    section: "Système",
+    items: [{ href: "/settings", label: "Administration", Icon: Settings }],
   },
 ];
 
