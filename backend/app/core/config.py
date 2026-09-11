@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     quote_refresh_seconds: int = 60  # default period of the monitor loop (app/monitor/scheduler.py)
     tiingo_api_key: str | None = None  # optional, paid — real fundamentals (app/data/fundamentals.py)
     anthropic_api_key: str | None = None  # optional — agentic trade explanations (app/agent/explain.py)
+    # Alpaca PAPER credentials. There is deliberately no live pair here: live
+    # trading is not implemented, and adding the settings before the safeguards
+    # would be the easiest possible way to end up one typo from a real order.
+    alpaca_api_key: str | None = None
+    alpaca_secret_key: str | None = None
 
 
 @lru_cache

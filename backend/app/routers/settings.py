@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.core import settings_store
 from app.core.db import get_db
 from app.monitor import scheduler
+from app.paper import venue
 from app.paper.brokers import available_brokers
 from app.paper.service import get_system_state, set_kill_switch
 
@@ -61,6 +62,23 @@ class KillSwitchIn(BaseModel):
 def kill_switch(body: KillSwitchIn, db: Session = Depends(get_db)) -> dict:
     s = set_kill_switch(db, body.engaged, body.reason)
     return {"engaged": s.kill_switch_engaged, "reason": s.kill_switch_reason}
+
+
+@router.post("/connections/{broker_name}/test")
+def test_connection(broker_name: str, db: Session = Depends(get_db)) -> dict:
+    """Check stored credentials against the venue. Returns a verdict rather
+    than an error status: "the key is wrong" is an expected answer here, and
+    nothing in the response contains the credentials themselves."""
+    if broker_name not in venue.VENUE_BROKERS:
+        raise HTTPException(status_code=404, detail=f"unknown venue broker: {broker_name}")
+    return venue.test_connection(db, broker_name)
+
+
+@router.get("/connections/{broker_name}/reconcile")
+def reconcile(broker_name: str, db: Session = Depends(get_db)) -> dict:
+    if broker_name not in venue.VENUE_BROKERS:
+        raise HTTPException(status_code=404, detail=f"unknown venue broker: {broker_name}")
+    return venue.reconcile(db, broker_name)
 
 
 @router.get("/monitor")

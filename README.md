@@ -299,6 +299,47 @@ pouvoir lancer les deux en parallèle sans conflit de port.
   et vente à découvert refusés avant tout appel broker ; monitor tournant sur les 14
   portefeuilles en ~1.5 s par passage.
 
+### Connexion Alpaca paper (terminé, non testé contre un vrai compte)
+
+- **`paper=True` est codé en dur** dans `AlpacaPaperBroker` et n'est exposé par aucun réglage,
+  aucune variable d'environnement, aucune route. Atteindre le trading réel depuis ce code n'est
+  pas une question de basculer un drapeau : il faudrait une autre classe et une autre paire
+  d'identifiants que ce code n'a aucun moyen de lire. Il n'y a volontairement pas de champs
+  `ALPACA_LIVE_*` — ajouter les réglages avant les garde-fous serait le plus court chemin vers
+  un vrai ordre à une faute de frappe près.
+- **Deux traductions qui portent tout le risque** : (1) un statut Alpaca inconnu redevient
+  `open`. Alpaca a des états que ce code n'a jamais vus, et en traiter un comme terminal
+  abandonnerait silencieusement un ordre vivant chez le venue pendant que le livre le croit
+  réglé ; le traiter comme ouvert coûte seulement un sondage de plus. (2) `partially_filled`
+  n'est **pas** réglé : notre règlement est one-shot par ordre alors qu'Alpaca remplit par
+  incréments, donc régler un partiel immédiatement enregistrerait la tranche et ignorerait le
+  reste. Un partiel reste `open` et n'est réglé qu'à l'état terminal réel — y compris le cas
+  d'une annulation après remplissage partiel.
+- **Un refus du venue est une valeur de retour**, pas une exception : pas de pouvoir d'achat,
+  symbole non fractionnable, marché fermé — ce sont des issues normales du trading, et lever
+  ferait tomber tout le cycle du tournoi pour un seul symbole. Un sondage en échec ne renvoie
+  jamais d'état terminal non plus : une coupure réseau ne doit pas s'enregistrer comme une
+  annulation.
+- **Réconciliation** (`app/paper/venue.py`) : absente de la spec d'origine, indispensable ici.
+  Dès que les ordres s'exécutent ailleurs, la base cesse d'être la source de vérité et devient
+  une *affirmation* à son sujet. Un livre non réconcilié est un livre qui a l'air juste sur tous
+  les tableaux de bord tout en étant faux.
+- **Une seule variante à la fois sur le venue.** Un compte Alpaca nette toutes les positions :
+  deux variantes longues sur le même symbole n'y font qu'une ligne, et l'attribution par
+  variante — le principe même du tournoi — cesse silencieusement d'être réelle. La promotion
+  refuse donc une deuxième variante sauf `force`, et la réconciliation signale le cas.
+- **Promotion explicite** : router une variante vers le venue exige la chaîne littérale
+  `CONFIRM` (HTTP 428 sinon). Tout le reste de l'application est de la comptabilité réversible ;
+  ceci est la seule action qui fait sortir des ordres de la machine.
+- **Identifiants** : posés dans Administration → Connexions (stockés en base, en écriture seule
+  à travers l'API) ou dans `backend/.env`. Un bouton « Tester la connexion » interroge le compte
+  et l'horloge de marché sans jamais renvoyer les identifiants.
+- **Vérifié** : 84 tests verts, dont 16 dédiés à la traduction des statuts et au garde-fou de
+  promotion, tous hors ligne. Chemins d'échec vérifiés en direct (absence d'identifiants, 428
+  sans `CONFIRM`, 409 sans identifiants, réconciliation à vide). **Non vérifié : aucun appel
+  n'a encore été fait contre un vrai compte Alpaca** — il faut une paire de clés valide pour
+  cela.
+
 ## Lancer en local
 
 ### Backend (FastAPI, port 8001)
@@ -332,19 +373,20 @@ uv run pytest
 Les 5 phases de la spec initiale sont terminées, ainsi que la boucle d'exécution
 (sorties, port broker, monitor, panneau d'administration).
 
-**Phase 3 du plan d'exécution — connexion Alpaca paper — non faite.** Le port broker
-l'attend : `AlpacaPaperBroker` est déclaré et refuse explicitement de se construire,
-et les champs d'identifiants existent dans le panneau, marqués indisponibles. Ce qui
-reste à trancher avant de router quoi que ce soit vers Alpaca :
+La connexion Alpaca paper est en place mais n'a encore jamais tourné contre un vrai
+compte. Ce qui reste ouvert :
 
-- **Un compte, quatorze portefeuilles.** Un compte Alpaca a un livre de positions unique
-  et nette les positions : deux variantes longues sur MSFT n'en font qu'une, et
-  l'attribution par variante redevient synthétique — ce que le simulateur fait déjà mieux
-  et gratuitement. La piste retenue est de ne promouvoir qu'une seule variante championne
-  vers le venue, les treize autres restant en `sim`.
-- **Réconciliation.** Comparer périodiquement le livre local aux positions du venue. Absent
-  de la spec d'origine, indispensable ici.
-- **Heures de marché et structures d'options**, cf. limites ci-dessus.
+- **Heures de marché.** Le simulateur ne les vérifie toujours pas. L'horloge Alpaca est
+  lue et affichée par le test de connexion, mais rien ne bloque encore un ordre hors
+  séance — côté venue, Alpaca s'en charge ; côté `sim`, l'écart reste.
+- **Structures d'options.** Toujours exécutées en proxy sur le sous-jacent (cf. limite
+  phase 2). Router cela vers un vrai venue produit un ordre actions étiqueté comme une
+  structure d'options dans le journal — à trancher avant de promouvoir quoi que ce soit.
+- **Quantités fractionnaires.** Les fills partiels du simulateur produisent des positions
+  fractionnaires ; Alpaca ne les accepte que sur les symboles éligibles, en ordre marché
+  DAY. Un refus est bien remonté comme rejet, mais la situation n'a pas été observée en réel.
+- **Réconciliation automatique.** Elle existe et s'appelle à la demande ; elle n'est pas
+  encore branchée dans la boucle du monitor.
 
 Autres pistes envisagées en cours de route : flux fondamentaux/news temporel réel
 (voir Phase 4), univers élargi pour Casino/Economist.

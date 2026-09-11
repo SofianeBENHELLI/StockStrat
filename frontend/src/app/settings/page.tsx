@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Check, Lock, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, Lock, PlugZap, RefreshCw, Scale } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, fmtMoney } from "@/lib/api";
 
 type FieldType = "float" | "int" | "bool" | "str" | "enum" | "secret";
 
@@ -41,7 +41,23 @@ type MonitorStatus = {
   last_result: { portfolios?: number; orders_resolved?: number; exits?: number; errors?: number };
 };
 
-type Broker = { name: string; label: string; available: boolean; description: string };
+type Broker = { name: string; label: string; available: boolean; needs_credentials: boolean; description: string };
+
+type ConnectionTest = {
+  ok: boolean;
+  stage: string;
+  detail: string;
+  account?: { account_number: string; status: string; currency: string; cash: number; equity: number; buying_power: number };
+  clock?: { is_open?: boolean; next_open?: string | null; next_close?: string | null; error?: string };
+};
+
+type Reconciliation = {
+  ok: boolean;
+  portfolios: number;
+  netted?: boolean;
+  detail: string;
+  differences: { symbol: string; ours: number; venue: number; delta: number }[];
+};
 
 type SettingsPayload = {
   groups: SettingGroup[];
@@ -172,6 +188,7 @@ export default function SettingsPage() {
               />
             ))}
             {group.key === "execution" && <BrokerList brokers={data.brokers} />}
+            {group.key === "connections" && <AlpacaConnection dirty={dirty} />}
           </CardContent>
         </Card>
       ))}
@@ -323,6 +340,103 @@ function FieldControl({
   );
 }
 
+function AlpacaConnection({ dirty }: { dirty: boolean }) {
+  const [test, setTest] = useState<ConnectionTest | null>(null);
+  const [rec, setRec] = useState<Reconciliation | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function run(what: "test" | "reconcile") {
+    setBusy(what);
+    try {
+      if (what === "test") {
+        setTest(await api<ConnectionTest>("/api/settings/connections/alpaca_paper/test", { method: "POST" }));
+      } else {
+        setRec(await api<Reconciliation>("/api/settings/connections/alpaca_paper/reconcile"));
+      }
+    } catch (e) {
+      const detail = e instanceof ApiError ? e.message : "Appel impossible.";
+      if (what === "test") setTest({ ok: false, stage: "request", detail });
+      else setRec({ ok: false, portfolios: 0, detail, differences: [] });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border p-3 space-y-3">
+      <div>
+        <p className="text-sm font-medium">Alpaca paper</p>
+        <p className="text-xs text-muted-foreground">
+          Vérifie les identifiants enregistrés contre le venue, et compare le livre local aux
+          positions réellement détenues chez Alpaca. Aucun identifiant n&apos;est renvoyé par ces
+          appels.
+        </p>
+      </div>
+      {dirty && (
+        <p className="text-xs text-amber-600">
+          Des modifications ne sont pas enregistrées — le test utilise les valeurs déjà en base.
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" disabled={busy !== null} onClick={() => run("test")}>
+          <PlugZap className="size-4" /> {busy === "test" ? "Test en cours…" : "Tester la connexion"}
+        </Button>
+        <Button variant="outline" disabled={busy !== null} onClick={() => run("reconcile")}>
+          <Scale className="size-4" /> {busy === "reconcile" ? "Réconciliation…" : "Réconcilier les positions"}
+        </Button>
+      </div>
+
+      {test && (
+        <div className="space-y-1 text-sm">
+          <p className={test.ok ? "text-emerald-600" : "text-red-600"}>
+            {test.ok ? "✓" : "✕"} {test.detail}
+          </p>
+          {test.account && (
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-4">
+              <Stat label="Compte" value={test.account.account_number || "—"} />
+              <Stat label="Statut" value={test.account.status.split(".").pop() ?? "—"} />
+              <Stat label="Équité" value={fmtMoney(test.account.equity)} />
+              <Stat label="Pouvoir d'achat" value={fmtMoney(test.account.buying_power)} />
+            </dl>
+          )}
+          {test.clock && test.clock.error == null && (
+            <p className="text-xs text-muted-foreground">
+              Marché {test.clock.is_open ? "ouvert" : "fermé"}
+              {!test.clock.is_open && test.clock.next_open
+                ? ` — réouverture ${new Date(test.clock.next_open).toLocaleString("fr-FR")}`
+                : ""}
+            </p>
+          )}
+        </div>
+      )}
+
+      {rec && (
+        <div className="space-y-1 text-sm">
+          <p className={rec.ok ? "text-emerald-600" : "text-amber-600"}>
+            {rec.ok ? "✓" : "!"} {rec.detail}
+          </p>
+          {rec.netted && (
+            <p className="text-xs text-amber-600">
+              Plusieurs variantes partagent ce compte : le venue nette leurs positions, donc
+              l&apos;attribution par variante n&apos;est plus réelle.
+            </p>
+          )}
+          {rec.differences.length > 0 && (
+            <ul className="text-xs font-mono space-y-0.5">
+              {rec.differences.map((d) => (
+                <li key={d.symbol}>
+                  {d.symbol}: livre {d.ours} · venue {d.venue} ({d.delta > 0 ? "+" : ""}
+                  {d.delta})
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BrokerList({ brokers }: { brokers: Broker[] }) {
   return (
     <div className="rounded-lg border divide-y">
@@ -334,6 +448,7 @@ function BrokerList({ brokers }: { brokers: Broker[] }) {
             <Badge variant={b.available ? "secondary" : "outline"}>
               {b.available ? "disponible" : "non implémenté"}
             </Badge>
+            {b.needs_credentials && <Badge variant="outline">identifiants requis</Badge>}
           </div>
           <p className="text-xs text-muted-foreground">{b.description}</p>
         </div>

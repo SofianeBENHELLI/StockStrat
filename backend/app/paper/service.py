@@ -23,7 +23,7 @@ from app.core import settings_store
 from app.data.provider import latest_prices
 from app.models import PaperOrder, PaperPortfolio, Position, SystemState
 from app.paper import settlement
-from app.paper.brokers import OrderSpec, get_broker
+from app.paper.brokers import BrokerProtocol, Credentials, OrderSpec, get_broker
 
 # Headroom on the pre-trade cash check. A fill is priced at the far side of the
 # modelled spread (up to 40bps half-spread) plus slippage (up to ~25bps), so the
@@ -36,6 +36,19 @@ OPEN_STATUSES = ("open",)
 
 class OrderRejected(Exception):
     """Refused before reaching the broker. The message is shown to the user."""
+
+
+def broker_for(db: Session, name: str) -> BrokerProtocol:
+    """Resolve a broker together with its credentials.
+
+    Credentials are read here rather than inside the broker so that
+    app/paper/brokers.py stays free of any database dependency and remains
+    testable with nothing but a pair of strings."""
+    credentials = Credentials(
+        api_key=settings_store.resolve(db, "connections.alpaca_api_key"),
+        secret_key=settings_store.resolve(db, "connections.alpaca_secret_key"),
+    )
+    return get_broker(name, credentials)
 
 
 def get_system_state(db: Session) -> SystemState:
@@ -102,7 +115,7 @@ def submit_order(
     _preflight(db, portfolio=portfolio, symbol=symbol, side=side, qty=qty,
                max_loss=max_loss, market_price=market_price)
 
-    broker = get_broker(portfolio.broker)
+    broker = broker_for(db, portfolio.broker)
     order = PaperOrder(
         portfolio_id=portfolio.id, symbol=symbol, side=side, qty=qty,
         order_type=order_type, limit_price=limit_price, max_loss=max_loss,
@@ -164,7 +177,7 @@ def poll_open_orders(db: Session, portfolio: PaperPortfolio) -> list[PaperOrder]
     for order in resting:
         quote = quotes.get(order.symbol)
         market_price = quote.price if quote else None
-        broker = get_broker(order.broker)
+        broker = broker_for(db, order.broker)
         spec = OrderSpec(order_id=order.id, symbol=order.symbol, side=order.side, qty=order.qty,
                          order_type=order.order_type, limit_price=order.limit_price)
         result = broker.poll(order.broker_order_id or "", spec, market_price)
@@ -180,7 +193,7 @@ def poll_open_orders(db: Session, portfolio: PaperPortfolio) -> list[PaperOrder]
 def cancel_order(db: Session, order: PaperOrder) -> PaperOrder:
     if order.status not in OPEN_STATUSES:
         raise OrderRejected(f"order {order.id} is {order.status}, only an open order can be cancelled")
-    get_broker(order.broker).cancel(order.broker_order_id or "")
+    broker_for(db, order.broker).cancel(order.broker_order_id or "")
     order.status = "cancelled"
     db.commit()
     settlement.log_event(db, order.id, "cancelled", {"by": "user"})

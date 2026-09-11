@@ -177,7 +177,8 @@ def test_unknown_broker_falls_back_to_the_simulator():
     assert get_broker("something-removed").name == "sim"
 
 
-def test_alpaca_is_declared_but_refuses_to_construct():
-    assert any(b["name"] == "alpaca_paper" and not b["available"] for b in available_brokers())
-    with pytest.raises(BrokerUnavailable, match="phase 3"):
+def test_alpaca_is_available_but_refuses_to_construct_without_credentials():
+    entry = next(b for b in available_brokers() if b["name"] == "alpaca_paper")
+    assert entry["available"] and entry["needs_credentials"]
+    with pytest.raises(BrokerUnavailable, match="credentials are missing"):
         get_broker("alpaca_paper")

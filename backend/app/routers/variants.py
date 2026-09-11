@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.data.provider import latest_prices
 from app.models import DecisionLog, PaperOrder, PaperPortfolio, Position, Variant
-from app.paper import accounting, exits
+from app.paper import accounting, exits, venue
+from app.paper.brokers import BrokerUnavailable
 from app.paper.service import OrderRejected, cancel_order, poll_open_orders, submit_order
 
 router = APIRouter(prefix="/api/variants", tags=["variants"])
@@ -154,6 +155,37 @@ def exit_preview(variant_id: int, db: Session = Depends(get_db)) -> dict:
             for d in exits.evaluate(db, portfolio, prices, rules=rules)
         ],
     }
+
+
+class BrokerAssignment(BaseModel):
+    broker: str
+    confirm: str = ""
+    force: bool = False
+
+
+@router.post("/{variant_id}/broker")
+def set_variant_broker(variant_id: int, body: BrokerAssignment, db: Session = Depends(get_db)) -> dict:
+    """Point one variant at a broker.
+
+    Moving a variant ONTO an external venue requires the literal string
+    "CONFIRM". Not security theatre: every other control in this app is
+    reversible bookkeeping, while this one is the single action that makes
+    orders leave the machine. A typed confirmation is the cheapest way to make
+    that boundary impossible to cross by a mis-click.
+    """
+    variant, _ = _get_variant_portfolio(db, variant_id)
+    if body.broker in venue.VENUE_BROKERS and body.confirm != "CONFIRM":
+        raise HTTPException(
+            status_code=428,
+            detail=f"envoyer confirm=\"CONFIRM\" pour router « {variant.name} » vers {body.broker}",
+        )
+    try:
+        portfolio = venue.promote(db, variant, body.broker, force=body.force)
+    except BrokerUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"variant_id": variant.id, "name": variant.name, "broker": portfolio.broker}
 
 
 @router.get("/{variant_id}/decisions")

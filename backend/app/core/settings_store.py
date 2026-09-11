@@ -96,11 +96,13 @@ FIELDS: tuple[Field, ...] = (
           help="Facultatif. Active les explications rédigées sur les trades exécutés (Haiku 4.5). "
                "Sans clé, le texte templaté du moteur de règles est utilisé et chaque décision reste journalisée."),
     Field("connections.alpaca_api_key", "Alpaca paper — identifiant de clé API", "secret", "connections",
-          available=False, unavailable_reason="L'exécution Alpaca n'est pas encore implémentée (phase 3).",
-          help="Identifiants de paper trading obtenus depuis le tableau de bord Alpaca."),
+          env_attr="alpaca_api_key",
+          help="Commence par PK. Généré depuis le tableau de bord Alpaca, côté Paper. "
+               "Une clé paper ne peut atteindre que l'endpoint paper."),
     Field("connections.alpaca_secret_key", "Alpaca paper — clé secrète", "secret", "connections",
-          available=False, unavailable_reason="L'exécution Alpaca n'est pas encore implémentée (phase 3).",
-          help="Identifiants de paper trading obtenus depuis le tableau de bord Alpaca."),
+          env_attr="alpaca_secret_key",
+          help="Affichée une seule fois par Alpaca à la génération. Si elle est perdue, il faut "
+               "régénérer la paire."),
 )
 
 BY_KEY: dict[str, Field] = {f.key: f for f in FIELDS}

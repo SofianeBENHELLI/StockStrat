@@ -5,6 +5,8 @@ the database is empty, and a stored secret cannot be read back out.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from app.core import settings_store
@@ -65,8 +67,15 @@ def test_clearing_a_secret_drops_the_override(db):
     assert field["overridden"] is False
 
 
-def test_unknown_and_unavailable_keys_are_refused_rather_than_ignored(db):
+def test_an_unknown_key_is_refused_rather_than_ignored(db):
     with pytest.raises(ValueError, match="unknown setting"):
         settings_store.apply_updates(db, {"trading.not_a_real_setting": 1})
+
+
+def test_a_field_marked_unavailable_cannot_be_written(db, monkeypatch):
+    """A setting can be declared before the feature that consumes it exists;
+    writing to one must fail loudly rather than store a value nothing reads."""
+    field = settings_store.BY_KEY["trading.exits_enabled"]
+    monkeypatch.setitem(settings_store.BY_KEY, field.key, replace(field, available=False))
     with pytest.raises(ValueError, match="not available yet"):
-        settings_store.apply_updates(db, {"connections.alpaca_api_key": "PK123"})
+        settings_store.apply_updates(db, {field.key: True})
