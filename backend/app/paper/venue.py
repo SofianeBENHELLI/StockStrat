@@ -72,7 +72,7 @@ def reconcile(db: Session, broker_name: str = "alpaca_paper") -> dict:
     pairs = _venue_portfolios(db)
     if not pairs:
         return {"ok": True, "broker": broker_name, "portfolios": 0,
-                "detail": "Aucune variante n'est routée vers ce venue.", "differences": []}
+                "detail": "aucun modèle n'est routé vers Alpaca pour l'instant.", "differences": []}
 
     try:
         broker = broker_for(db, broker_name)
@@ -102,8 +102,8 @@ def reconcile(db: Session, broker_name: str = "alpaca_paper") -> dict:
     return {
         "ok": not differences, "broker": broker_name, "portfolios": len(pairs),
         "netted": len(pairs) > 1,
-        "detail": ("Le livre local et le venue concordent." if not differences
-                   else f"{len(differences)} écart(s) entre le livre local et le venue."),
+        "detail": ("chaque position locale correspond à Alpaca." if not differences
+                   else f"{len(differences)} écart(s) entre les livres et Alpaca."),
         "differences": differences,
     }
 

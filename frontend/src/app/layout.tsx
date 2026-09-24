@@ -3,8 +3,8 @@ import "./globals.css";
 import AppShell from "@/components/app-shell";
 
 export const metadata: Metadata = {
-  title: "Strategy Tournament",
-  description: "Paper trading strategy tournament — simulation only.",
+  title: "StockStrat",
+  description: "Labo de stratégies et paper trading.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

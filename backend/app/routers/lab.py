@@ -145,7 +145,7 @@ def backtest_all(body: BacktestIn, db: Session = Depends(get_db)) -> list[dict]:
 def _run_payload(run) -> dict:
     return {"id": run.id, "model_id": run.variant_id, "params": run.params, "start": run.start, "end": run.end,
             "budget": run.budget, "summary": run.summary, "series": run.series, "trades": run.trades,
-            "created_at": run.created_at.isoformat()}
+            "created_at": service.iso(run.created_at)}
 
 
 # ------------------------------------------------------------------ paper --

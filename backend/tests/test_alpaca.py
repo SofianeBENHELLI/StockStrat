@@ -151,7 +151,7 @@ def test_reconcile_reports_a_book_that_disagrees_with_the_venue(db, monkeypatch)
 def test_reconcile_is_quiet_when_nothing_is_routed_to_the_venue(db):
     assert venue.reconcile(db) == {
         "ok": True, "broker": "alpaca_paper", "portfolios": 0,
-        "detail": "Aucune variante n'est routée vers ce venue.", "differences": [],
+        "detail": "aucun modèle n'est routé vers Alpaca pour l'instant.", "differences": [],
     }
 
 

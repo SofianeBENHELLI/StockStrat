@@ -38,7 +38,7 @@ type MonitorStatus = {
   last_run_at: string | null;
   last_duration_ms: number | null;
   last_error: string | null;
-  last_result: { portfolios?: number; orders_resolved?: number; exits?: number; errors?: number };
+  last_result: { decided?: number; fills?: number; snapshots?: number; errors?: number };
 };
 
 type Broker = { name: string; label: string; available: boolean; needs_credentials: boolean; description: string };
@@ -477,8 +477,8 @@ function MonitorCard({
           </Badge>
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          Sonde les ordres en attente, applique les règles de sortie et enregistre l&apos;équité
-          toutes les {status.interval_seconds}s.
+          Toutes les {status.interval_seconds}s : sonde les ordres en attente, fait décider les modèles
+          peu avant la clôture, enregistre l&apos;équité et réconcilie avec Alpaca.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -489,9 +489,9 @@ function MonitorCard({
             value={status.last_run_at ? new Date(status.last_run_at).toLocaleTimeString("fr-FR") : "—"}
           />
           <Stat label="Durée" value={status.last_duration_ms != null ? `${status.last_duration_ms} ms` : "—"} />
-          <Stat label="Portefeuilles" value={r.portfolios != null ? String(r.portfolios) : "—"} />
-          <Stat label="Ordres résolus" value={r.orders_resolved != null ? String(r.orders_resolved) : "—"} />
-          <Stat label="Sorties" value={r.exits != null ? String(r.exits) : "—"} />
+          <Stat label="Décisions" value={r.decided != null ? String(r.decided) : "—"} />
+          <Stat label="Exécutions reçues" value={r.fills != null ? String(r.fills) : "—"} />
+          <Stat label="Relevés d'équité" value={r.snapshots != null ? String(r.snapshots) : "—"} />
         </dl>
         {status.last_error && (
           <p className="text-sm text-red-600 flex items-start gap-2">

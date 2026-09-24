@@ -33,6 +33,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def iso(dt: datetime | None) -> str | None:
+    """SQLite hands datetimes back without a timezone even though they were
+    written in UTC. Serialised as-is, a browser reads them as local time and
+    every "il y a…" is off by the UTC offset. Say it's UTC, explicitly."""
+    if dt is None:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).isoformat()
+
+
 # ------------------------------------------------------------------ models --
 
 def models(db: Session, stages=LAB_STAGES) -> list[Variant]:
@@ -228,13 +237,13 @@ def serialize(db: Session, m: Variant, with_backtest: bool = True, prices: dict 
         "variant_key": m.variant_key, "description": m.description, "params": m.params or {},
         "resolved_params": profile.resolve(m.params), "budget": m.budget, "stage": m.stage,
         "parent_id": m.parent_variant_id, "cadence": profile.cadence,
-        "promoted_at": m.promoted_at.isoformat() if m.promoted_at else None,
-        "last_decision_on": m.last_decision_on, "created_at": m.created_at.isoformat(),
+        "promoted_at": iso(m.promoted_at),
+        "last_decision_on": m.last_decision_on, "created_at": iso(m.created_at),
     }
     if with_backtest:
         bt = latest_backtest(db, m)
         out["backtest"] = ({"id": bt.id, "start": bt.start, "end": bt.end, "budget": bt.budget,
-                            "created_at": bt.created_at.isoformat(),
+                            "created_at": iso(bt.created_at),
                             **{k: bt.summary.get(k) for k in (
                                 "pnl_usd", "pnl_pct", "max_drawdown_usd", "max_drawdown_pct", "cagr_pct", "sharpe",
                                 "vs_benchmark_usd", "vs_placebo_usd", "return_over_drawdown", "exposure_pct")},
@@ -255,7 +264,7 @@ def events(db: Session, m: Variant | None = None, limit: int = 60) -> list[dict]
         q = q.where(LabEvent.variant_id == m.id)
     names = {v.id: v.name for v in db.scalars(select(Variant))}
     return [{"id": e.id, "model_id": e.variant_id, "model": names.get(e.variant_id), "kind": e.kind,
-             "symbol": e.symbol, "message": e.message, "data": e.data, "at": e.created_at.isoformat()}
+             "symbol": e.symbol, "message": e.message, "data": e.data, "at": iso(e.created_at)}
             for e in db.scalars(q)]
 
 
@@ -267,7 +276,7 @@ def orders(db: Session, m: Variant, limit: int = 100) -> list[dict]:
     return [{"id": o.id, "symbol": o.symbol, "label": label(o.symbol), "side": o.side, "qty": o.qty,
              "status": o.status, "filled_qty": o.filled_qty, "filled_avg_price": o.filled_avg_price,
              "requested_price": o.requested_price, "realized_pnl": o.realized_pnl, "reason": o.rationale,
-             "broker": o.broker, "broker_order_id": o.broker_order_id, "created_at": o.created_at.isoformat()}
+             "broker": o.broker, "broker_order_id": o.broker_order_id, "created_at": iso(o.created_at)}
             for o in rows]
 
 

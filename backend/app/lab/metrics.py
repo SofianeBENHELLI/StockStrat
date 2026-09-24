@@ -24,6 +24,10 @@ def drawdown(equity: pd.Series) -> dict:
     return {
         "max_drawdown_usd": round(float(dd_usd.min()), 2),
         "max_drawdown_pct": round(float((equity / peak - 1).min() * 100), 2),
+        # The % of the dollar-worst episode itself. Usually equal to the line
+        # above, but not always: an early -30% on a small portfolio can be the
+        # worst in % while a later -15% on a larger one is the worst in dollars.
+        "episode_pct": round(float((equity.loc[trough_day] / equity.loc[peak_day] - 1) * 100), 2),
         "peak_day": peak_day.date().isoformat(),
         "trough_day": trough_day.date().isoformat(),
         "recovered_day": back.index[0].date().isoformat() if len(back) else None,
