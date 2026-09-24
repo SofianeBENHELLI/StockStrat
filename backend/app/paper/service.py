@@ -69,11 +69,14 @@ def _held_qty(db: Session, portfolio: PaperPortfolio, symbol: str) -> float:
 
 def _preflight(
     db: Session, *, portfolio: PaperPortfolio, symbol: str, side: str, qty: float,
-    max_loss: float | None, market_price: float | None,
+    max_loss: float | None, market_price: float | None, protective: bool = False,
 ) -> None:
-    """Every reason to refuse an order, evaluated before anything executes."""
+    """Every reason to refuse an order, evaluated before anything executes.
+
+    `protective` orders (the standing safety stop) only ever reduce risk, so
+    the kill switch — which exists to stop new risk — does not block them."""
     state = get_system_state(db)
-    if state.kill_switch_engaged:
+    if state.kill_switch_engaged and not protective:
         raise OrderRejected(f"kill switch engaged: {state.kill_switch_reason or 'no reason given'}")
     if qty <= 0:
         raise OrderRejected("quantity must be positive")
@@ -106,21 +109,27 @@ def submit_order(
     db: Session, *, portfolio: PaperPortfolio, symbol: str, side: str, qty: float,
     order_type: str = "market", limit_price: float | None = None,
     max_loss: float | None = None, rationale: str = "", exit_reason: str | None = None,
-    extended_hours: bool = False,
+    extended_hours: bool = False, stop_price: float | None = None, time_in_force: str = "day",
+    purpose: str = "trade",
 ) -> PaperOrder:
     symbol = symbol.upper()
+    if side == "sell" and purpose == "trade":
+        # The shares may be reserved at the broker by this model's standing
+        # safety stop; a sell would be refused until that stop is withdrawn.
+        from app.paper import safety
+        safety.release(db, portfolio, symbol)
     quotes = latest_prices([symbol])
     quote = quotes.get(symbol)
     market_price = quote.price if quote else None
 
     _preflight(db, portfolio=portfolio, symbol=symbol, side=side, qty=qty,
-               max_loss=max_loss, market_price=market_price)
+               max_loss=max_loss, market_price=market_price, protective=(purpose == "safety_stop"))
 
     broker = broker_for(db, portfolio.broker)
     order = PaperOrder(
         portfolio_id=portfolio.id, symbol=symbol, side=side, qty=qty,
-        order_type=order_type, limit_price=limit_price, max_loss=max_loss,
-        rationale=rationale, exit_reason=exit_reason, status="proposed",
+        order_type=order_type, limit_price=limit_price, stop_price=stop_price, time_in_force=time_in_force,
+        purpose=purpose, max_loss=max_loss, rationale=rationale, exit_reason=exit_reason, status="proposed",
         broker=broker.name, requested_price=market_price,
     )
     db.add(order)
@@ -132,7 +141,8 @@ def submit_order(
     })
 
     spec = OrderSpec(order_id=order.id, symbol=symbol, side=side, qty=qty,
-                     order_type=order_type, limit_price=limit_price,
+                     order_type=order_type, limit_price=limit_price, stop_price=stop_price,
+                     time_in_force=time_in_force,
                      client_order_id=f"ss-m{portfolio.variant_id}-o{order.id}",
                      extended_hours=extended_hours)
     result = broker.submit(spec, market_price)
@@ -148,9 +158,13 @@ def submit_order(
 def _resolve(db: Session, portfolio: PaperPortfolio, order: PaperOrder, result, quote_source: str) -> None:
     """Turn a broker answer into database state, once."""
     if result.status in ("filled", "partial_fill") and result.filled_avg_price:
-        settlement.apply_fill(db, portfolio=portfolio, order=order,
-                              filled_qty=result.filled_qty, price=result.filled_avg_price,
-                              status=result.status)
+        settled = settlement.apply_fill(db, portfolio=portfolio, order=order,
+                                        filled_qty=result.filled_qty, price=result.filled_avg_price,
+                                        status=result.status)
+        if settled:
+            # Keep the standing safety stop in line with what is now held.
+            from app.paper import safety
+            safety.after_fill(db, portfolio, order)
     else:
         order.status = result.status
         db.commit()
@@ -163,15 +177,20 @@ def _resolve(db: Session, portfolio: PaperPortfolio, order: PaperOrder, result, 
     })
 
 
-def open_orders(db: Session, portfolio: PaperPortfolio) -> list[PaperOrder]:
-    return list(db.scalars(select(PaperOrder).where(
-        PaperOrder.portfolio_id == portfolio.id, PaperOrder.status.in_(OPEN_STATUSES))))
+def open_orders(db: Session, portfolio: PaperPortfolio, purpose: str | None = "trade") -> list[PaperOrder]:
+    """Resting orders. By default only the model's own decisions: a standing
+    safety stop is protection, not a pending decision, and must not block the
+    next one. Pass `purpose=None` for every open order."""
+    q = select(PaperOrder).where(PaperOrder.portfolio_id == portfolio.id, PaperOrder.status.in_(OPEN_STATUSES))
+    if purpose is not None:
+        q = q.where(PaperOrder.purpose == purpose)
+    return list(db.scalars(q))
 
 
 def poll_open_orders(db: Session, portfolio: PaperPortfolio) -> list[PaperOrder]:
     """Re-check every resting order against a fresh price. Called by the monitor
     loop; also safe to call by hand. Returns the orders whose status changed."""
-    resting = open_orders(db, portfolio)
+    resting = open_orders(db, portfolio, purpose=None)
     if not resting:
         return []
 
@@ -182,7 +201,8 @@ def poll_open_orders(db: Session, portfolio: PaperPortfolio) -> list[PaperOrder]
         market_price = quote.price if quote else None
         broker = broker_for(db, order.broker)
         spec = OrderSpec(order_id=order.id, symbol=order.symbol, side=order.side, qty=order.qty,
-                         order_type=order.order_type, limit_price=order.limit_price)
+                         order_type=order.order_type, limit_price=order.limit_price,
+                         stop_price=order.stop_price, time_in_force=order.time_in_force or "day")
         result = broker.poll(order.broker_order_id or "", spec, market_price)
         if result.status in OPEN_STATUSES:
             continue

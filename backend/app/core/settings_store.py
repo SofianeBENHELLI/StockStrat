@@ -70,6 +70,11 @@ FIELDS: tuple[Field, ...] = (
           minimum=2, maximum=390, unit="min avant clôture",
           help="Les modèles décident chaque jour ce nombre de minutes avant la clôture de Wall Street, "
                "sur le dernier prix — l'équivalent réel de la clôture utilisée par le backtest."),
+    Field("execution.safety_stop_pct", "Stop de secours chez le broker", "float", "execution", default=25.0,
+          minimum=0, maximum=90, unit="%",
+          help="Chaque position garde chez Alpaca un ordre stop permanent à ce pourcentage sous son prix "
+               "d'achat. Il protège quand l'application est arrêtée ; en temps normal les stops des modèles "
+               "(vérifiés à la clôture) agissent bien avant. Actions entières uniquement. 0 = désactivé."),
     Field("execution.max_total_allocation", "Capital total alloué aux modèles", "float", "execution",
           default=95_000.0, minimum=100.0, unit="$",
           help="Plafond de la somme des budgets des modèles en paper. Le compte Alpaca a 100 000 $ de "

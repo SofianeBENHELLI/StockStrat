@@ -75,7 +75,11 @@ def _minutes_to_close(clock: dict) -> float | None:
 
 def _journal_fills(db: Session, m: Variant, changed) -> None:
     for o in changed:
-        if o.status in ("filled", "partial_fill"):
+        if o.status in ("filled", "partial_fill") and o.purpose == "safety_stop":
+            runner.journal(db, m, "exit", f"Stop de secours déclenché chez le broker : {label(o.symbol)} "
+                                          f"{o.filled_qty:g} @ {o.filled_avg_price:,.2f} $, P&L réalisé "
+                                          f"{(o.realized_pnl or 0):+,.2f} $", o.symbol, {"order_id": o.id})
+        elif o.status in ("filled", "partial_fill"):
             verb = "Achat" if o.side == "buy" else "Vente"
             pnl = f", P&L réalisé {o.realized_pnl:+,.2f} $" if o.realized_pnl is not None else ""
             runner.journal(db, m, "fill", f"{verb} exécuté : {label(o.symbol)} {o.filled_qty:g} @ "

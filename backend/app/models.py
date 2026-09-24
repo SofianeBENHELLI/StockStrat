@@ -94,8 +94,13 @@ class PaperOrder(Base):
     symbol: Mapped[str] = mapped_column(String(20))
     side: Mapped[str] = mapped_column(String(4))  # buy | sell
     qty: Mapped[float] = mapped_column(Float)
-    order_type: Mapped[str] = mapped_column(String(10), default="market")  # market | limit
+    order_type: Mapped[str] = mapped_column(String(10), default="market")  # market | limit | stop
     limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    time_in_force: Mapped[str] = mapped_column(String(5), default="day")  # day | gtc
+    # trade: a decision of the model. safety_stop: the standing catastrophe stop
+    # kept at the broker (app/paper/safety.py) — not a pending decision.
+    purpose: Mapped[str] = mapped_column(String(20), default="trade", index=True)
     max_loss: Mapped[float | None] = mapped_column(Float, nullable=True)  # required: defined before open
     rationale: Mapped[str] = mapped_column(Text, default="")
     realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)  # set on sell fills; drives hit-rate/profit-factor

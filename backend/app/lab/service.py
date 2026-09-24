@@ -179,7 +179,9 @@ def promote(db: Session, m: Variant, budget: float | None = None) -> dict:
 def retire(db: Session, m: Variant) -> dict:
     if m.stage != "paper":
         raise ValueError("seul un modèle en paper peut être retiré")
-    for o in open_orders(db, m.portfolio):
+    for o in open_orders(db, m.portfolio, purpose=None):
+        if o.purpose == "safety_stop":
+            continue  # withdrawn by the sell below, with confirmation from the broker
         try:
             cancel_order(db, o)
         except OrderRejected:
@@ -225,6 +227,7 @@ def paper_stats(db: Session, m: Variant, prices: dict[str, float] | None = None)
         "max_drawdown_usd": round(worst, 2),
         "positions": db.query(Position).filter(Position.portfolio_id == p.id, Position.qty > 0).count(),
         "open_orders": len(open_orders(db, p)),
+        "protected": len(open_orders(db, p, purpose="safety_stop")),
         "broker": p.broker,
         "sparkline": [round(e, 2) for e in curve[-120:]],
     }
@@ -279,7 +282,8 @@ def orders(db: Session, m: Variant, limit: int = 100) -> list[dict]:
     return [{"id": o.id, "symbol": o.symbol, "label": label(o.symbol), "side": o.side, "qty": o.qty,
              "status": o.status, "filled_qty": o.filled_qty, "filled_avg_price": o.filled_avg_price,
              "requested_price": o.requested_price, "realized_pnl": o.realized_pnl, "reason": o.rationale,
-             "broker": o.broker, "broker_order_id": o.broker_order_id, "created_at": iso(o.created_at)}
+             "broker": o.broker, "broker_order_id": o.broker_order_id, "created_at": iso(o.created_at),
+             "purpose": o.purpose, "order_type": o.order_type, "stop_price": o.stop_price}
             for o in rows]
 
 

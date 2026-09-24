@@ -27,7 +27,8 @@ from app.core.db import SessionLocal, init_db  # noqa: E402
 from app.lab import data as market  # noqa: E402
 from app.lab.runner import journal, market_clock  # noqa: E402
 from app.models import PaperPortfolio, Position, Variant  # noqa: E402
-from app.paper import venue  # noqa: E402
+from app.paper import safety, venue  # noqa: E402
+from app.paper.service import broker_for  # noqa: E402
 from app.paper.service import open_orders, poll_open_orders, submit_order  # noqa: E402
 
 NAME = "Test de bout en bout (1 action)"
@@ -88,6 +89,15 @@ def main(symbol: str = "F") -> int:
     rec = venue.reconcile(db)
     step("réconciliation après achat", rec["ok"], rec["detail"])
 
+    stop = safety._stop(db, v.portfolio, symbol)
+    if stop is not None:
+        at_broker = broker_for(db, "alpaca_paper")._client.get_order_by_id(stop.broker_order_id)
+        step("stop de secours posé chez Alpaca", str(at_broker.status).lower().endswith(("new", "accepted", "held")),
+             f"{at_broker.qty} action(s) à {at_broker.stop_price} $, {str(at_broker.time_in_force).split('.')[-1]}, "
+             f"statut {str(at_broker.status).split('.')[-1]}")
+    else:
+        step("stop de secours posé chez Alpaca", False, "aucun stop en base (réglage à 0 ?)")
+
     held = db.scalar(select(Position.qty).where(Position.portfolio_id == v.portfolio.id, Position.symbol == symbol))
     sell_price = (market.latest_prices([symbol]).get(symbol) or price) * 0.996
     sell = submit_order(db, portfolio=v.portfolio, symbol=symbol, side="sell", qty=held, order_type="limit",
@@ -99,10 +109,15 @@ def main(symbol: str = "F") -> int:
         return 1
     journal(db, v, "fill", f"Test : revente {symbol} @ {sell.filled_avg_price}, P&L {sell.realized_pnl:+.2f} $")
 
+    if stop is not None:
+        db.refresh(stop)
+        at_broker = broker_for(db, "alpaca_paper")._client.get_order_by_id(stop.broker_order_id)
+        step("stop retiré chez Alpaca avant la revente", str(at_broker.status).lower().endswith("canceled"),
+             f"statut {str(at_broker.status).split('.')[-1]}")
     rec = venue.reconcile(db)
     step("réconciliation après revente", rec["ok"], rec["detail"])
     db.refresh(v.portfolio)
-    step("aucun ordre resté ouvert", not open_orders(db, v.portfolio))
+    step("aucun ordre resté ouvert", not open_orders(db, v.portfolio, purpose=None))
     print(f"  cash du portefeuille de test : {v.portfolio.cash:.2f} $ (départ {BUDGET:.2f} $)")
     return 0 if rec["ok"] else 1
 

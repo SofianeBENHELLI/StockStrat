@@ -48,8 +48,10 @@ class OrderSpec:
     symbol: str
     side: str                      # buy | sell
     qty: float
-    order_type: str = "market"     # market | limit
+    order_type: str = "market"     # market | limit | stop
     limit_price: float | None = None
+    stop_price: float | None = None
+    time_in_force: str = "day"     # day | gtc
     client_order_id: str | None = None  # our tag, visible in the Alpaca dashboard
     extended_hours: bool = False        # pre/after-market session; Alpaca accepts it on limit orders only
 
@@ -85,6 +87,15 @@ class SimBroker:
     name = "sim"
 
     def submit(self, spec: OrderSpec, market_price: float | None) -> BrokerOrderResult:
+        if spec.order_type == "stop":
+            # A stop rests until the price crosses it, then becomes a market order.
+            if spec.stop_price is None:
+                return BrokerOrderResult(f"sim-{spec.order_id}", "rejected", detail="stop order without stop price")
+            triggered = market_price is not None and (
+                market_price <= spec.stop_price if spec.side == "sell" else market_price >= spec.stop_price)
+            if not triggered:
+                return BrokerOrderResult(f"sim-{spec.order_id}", "open", detail="stop not triggered")
+            spec = OrderSpec(order_id=spec.order_id, symbol=spec.symbol, side=spec.side, qty=spec.qty)
         result = simulate_fill(
             symbol=spec.symbol, side=spec.side, qty=spec.qty, order_type=spec.order_type,
             limit_price=spec.limit_price, market_price=market_price, order_id=spec.order_id,
@@ -195,15 +206,19 @@ class AlpacaPaperBroker:
         """`market_price` is ignored: the venue has its own book. It stays in the
         signature because the port is shared with the simulator, which needs it."""
         from alpaca.trading.enums import OrderSide, TimeInForce
-        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
+        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest, StopOrderRequest
 
         side = OrderSide.BUY if spec.side == "buy" else OrderSide.SELL
         common = {"symbol": spec.symbol, "qty": spec.qty, "side": side,
-                  "time_in_force": TimeInForce.DAY}
+                  "time_in_force": TimeInForce.GTC if spec.time_in_force == "gtc" else TimeInForce.DAY}
         if spec.client_order_id:
             common["client_order_id"] = spec.client_order_id
         try:
-            if spec.order_type == "limit":
+            if spec.order_type == "stop":
+                if spec.stop_price is None:
+                    return BrokerOrderResult("", "rejected", detail="stop order without stop price")
+                request = StopOrderRequest(**common, stop_price=round(spec.stop_price, 2))
+            elif spec.order_type == "limit":
                 if spec.limit_price is None:
                     return BrokerOrderResult("", "rejected", detail="limit order without limit price")
                 request = LimitOrderRequest(**common, limit_price=round(spec.limit_price, 2),

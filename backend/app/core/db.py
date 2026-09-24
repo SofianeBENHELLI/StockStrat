@@ -52,6 +52,9 @@ def init_db() -> None:
     _ensure_column("variants", "promoted_at", "DATETIME")
     _ensure_column("variants", "last_decision_on", "TEXT")
     _ensure_column("variants", "last_rebalance_on", "TEXT")
+    _ensure_column("paper_orders", "stop_price", "FLOAT")
+    _ensure_column("paper_orders", "time_in_force", "TEXT DEFAULT 'day'")
+    _ensure_column("paper_orders", "purpose", "TEXT DEFAULT 'trade'")
 
 
 def get_db() -> Generator[Session, None, None]:
