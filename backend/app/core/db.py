@@ -44,6 +44,14 @@ def init_db() -> None:
     _ensure_column("paper_orders", "broker", "TEXT DEFAULT 'sim'")
     _ensure_column("paper_orders", "broker_order_id", "TEXT")
     _ensure_column("paper_orders", "exit_reason", "TEXT")
+    # The lab. Existing rows predate it (the old tournament), so the new stage
+    # column defaults them to 'archived': kept on disk, out of every screen.
+    _ensure_column("variants", "params", "JSON DEFAULT '{}'")
+    _ensure_column("variants", "budget", "FLOAT DEFAULT 10000")
+    _ensure_column("variants", "stage", "TEXT DEFAULT 'archived'")
+    _ensure_column("variants", "promoted_at", "DATETIME")
+    _ensure_column("variants", "last_decision_on", "TEXT")
+    _ensure_column("variants", "last_rebalance_on", "TEXT")
 
 
 def get_db() -> Generator[Session, None, None]:

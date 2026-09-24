@@ -131,7 +131,8 @@ def submit_order(
     })
 
     spec = OrderSpec(order_id=order.id, symbol=symbol, side=side, qty=qty,
-                     order_type=order_type, limit_price=limit_price)
+                     order_type=order_type, limit_price=limit_price,
+                     client_order_id=f"ss-m{portfolio.variant_id}-o{order.id}")
     result = broker.submit(spec, market_price)
 
     order.broker_order_id = result.broker_order_id

@@ -5,3 +5,4 @@ __pycache__/
 .env
 app/ml/artifacts/
 .pytest_cache/
+data_cache/

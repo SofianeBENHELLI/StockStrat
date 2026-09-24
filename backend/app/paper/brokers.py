@@ -50,6 +50,7 @@ class OrderSpec:
     qty: float
     order_type: str = "market"     # market | limit
     limit_price: float | None = None
+    client_order_id: str | None = None  # our tag, visible in the Alpaca dashboard
 
 
 @dataclass
@@ -87,6 +88,11 @@ class SimBroker:
             symbol=spec.symbol, side=spec.side, qty=spec.qty, order_type=spec.order_type,
             limit_price=spec.limit_price, market_price=market_price, order_id=spec.order_id,
             unfilled_limit_status="open",
+            # A partial fill here would be terminal, while at a real venue the
+            # remainder keeps working until it fills. Terminal partials left
+            # ~18% of lab orders short, stranding idle cash and residual
+            # positions no real broker would leave. Spread and slippage stay.
+            allow_partial=False,
         )
         return BrokerOrderResult(
             broker_order_id=f"sim-{spec.order_id}", status=result.status,
@@ -193,6 +199,8 @@ class AlpacaPaperBroker:
         side = OrderSide.BUY if spec.side == "buy" else OrderSide.SELL
         common = {"symbol": spec.symbol, "qty": spec.qty, "side": side,
                   "time_in_force": TimeInForce.DAY}
+        if spec.client_order_id:
+            common["client_order_id"] = spec.client_order_id
         try:
             if spec.order_type == "limit":
                 if spec.limit_price is None:

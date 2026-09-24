@@ -63,11 +63,11 @@ def _venue_portfolios(db: Session) -> list[tuple[Variant, PaperPortfolio]]:
 def reconcile(db: Session, broker_name: str = "alpaca_paper") -> dict:
     """Compare what we believe we hold against what the venue says we hold.
 
-    A note on interpreting the result: the venue keeps ONE position book per
-    account. If several portfolios are pointed at the same credentials their
-    holdings are netted together there, and a per-variant comparison becomes
-    meaningless. That is why promotion refuses a second variant by default —
-    and why this function reports the count rather than quietly summing.
+    Every model has its own sub-ledger inside the one shared Alpaca account.
+    The broker only sees one pooled position per symbol, so the check is on
+    the sum: all sub-ledgers together must hold exactly what Alpaca holds. Any
+    difference means an order was filled, cancelled or partially executed
+    without the ledger learning of it.
     """
     pairs = _venue_portfolios(db)
     if not pairs:
@@ -107,30 +107,3 @@ def reconcile(db: Session, broker_name: str = "alpaca_paper") -> dict:
         "differences": differences,
     }
 
-
-def promote(db: Session, variant: Variant, broker_name: str, *, force: bool = False) -> PaperPortfolio:
-    """Point a variant's portfolio at a broker.
-
-    Refuses a second variant on the same venue unless forced, because one
-    account nets every position: two variants long the same symbol become one
-    line at the venue, and per-variant attribution — the entire point of the
-    tournament — silently stops being real.
-    """
-    portfolio = variant.portfolio
-    if portfolio is None:
-        raise ValueError("cette variante n'a pas de portefeuille")
-
-    if broker_name in VENUE_BROKERS:
-        broker_for(db, broker_name)  # raises BrokerUnavailable if not configured
-        others = [v.name for v, p in _venue_portfolios(db) if p.id != portfolio.id]
-        if others and not force:
-            raise ValueError(
-                f"{others[0]} est déjà routée vers {broker_name}. Un compte Alpaca nette toutes "
-                f"les positions, donc deux variantes sur le même compte rendent l'attribution par "
-                f"variante fictive. Rétrograder l'autre d'abord, ou forcer explicitement."
-            )
-
-    portfolio.broker = broker_name
-    db.commit()
-    db.refresh(portfolio)
-    return portfolio

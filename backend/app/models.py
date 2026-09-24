@@ -1,6 +1,15 @@
-"""Phase 1 entities: variants, paper portfolios, positions, orders, snapshots,
-execution/audit logs. No AI, no strategy logic yet — variants are created manually
-or via seed script; the strategy engines (phase 2+) populate `proposed_by`."""
+"""Persistence for the lab and its paper accounts.
+
+The central object is the **model** (table `variants`, kept for continuity with
+the data already on disk): a profile, a set of parameters and a budget, moving
+through stages — `lab` (defined, backtested) -> `paper` (trading on Alpaca paper
+with its own ledger) -> `retired`. Rows from the old tournament are kept as
+`archived` rather than deleted.
+
+A paper model's money lives in its `PaperPortfolio`: a sub-ledger inside the one
+shared Alpaca paper account. Every order belongs to exactly one portfolio, so
+attribution is exact at the level of fills even though the broker only sees one
+pooled position per symbol — and reconciliation checks the two agree."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -16,21 +25,31 @@ def utcnow() -> datetime:
 
 
 class Variant(Base):
-    """One tournament participant: a named strategy variant with its own paper portfolio."""
+    """A model: profile + parameters + budget, and where it is in its life."""
     __tablename__ = "variants"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
-    engine: Mapped[str] = mapped_column(String(20), default="manual")  # casino | ml | economist | manual
-    variant_key: Mapped[str] = mapped_column(String(4), default="")  # A | B | C | D | E — see tournament/variants_config.py
+    engine: Mapped[str] = mapped_column(String(20), default="flambeur")  # the profile key
+    variant_key: Mapped[str] = mapped_column(String(4), default="")
     description: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[str] = mapped_column(String(20), default="active")  # active | killed
-    generation: Mapped[int] = mapped_column(Integer, default=0)  # 0 = seeded roster, 1+ = spawned from a winner
+    params: Mapped[dict] = mapped_column(JSON, default=dict)             # overrides on the profile defaults
+    budget: Mapped[float] = mapped_column(Float, default=10_000.0)
+    stage: Mapped[str] = mapped_column(String(20), default="lab", index=True)  # lab | paper | retired | archived
     parent_variant_id: Mapped[int | None] = mapped_column(ForeignKey("variants.id"), nullable=True)
-    scaled: Mapped[bool] = mapped_column(Boolean, default=False)  # cash boost is a one-time reward,
-    # not a recurring one — see app/tournament/cycle.py's run_cycle docstring for the bug this guards
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_decision_on: Mapped[str | None] = mapped_column(String(10), nullable=True)  # ISO session date
+    last_rebalance_on: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Legacy tournament columns, still present on disk; unused by the lab.
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    generation: Mapped[int] = mapped_column(Integer, default=0)
+    scaled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     portfolio: Mapped[PaperPortfolio] = relationship(back_populates="variant", uselist=False)
+
+    @property
+    def profile(self) -> str:
+        return self.engine
 
 
 class PaperPortfolio(Base):
@@ -112,27 +131,6 @@ class ExecutionEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-class DecisionLog(Base):
-    """Auditable log of every paper trade decision with its reasoning — the spec's
-    'journal des décisions'. Phase 1 rationale is manual/free text; phase 5 fills it
-    with agentic explanations."""
-    __tablename__ = "decision_log"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    variant_id: Mapped[int] = mapped_column(ForeignKey("variants.id"), index=True)
-    order_id: Mapped[int | None] = mapped_column(ForeignKey("paper_orders.id"), nullable=True)
-    symbol: Mapped[str] = mapped_column(String(20))
-    action: Mapped[str] = mapped_column(String(10))  # buy | sell | hold
-    structure: Mapped[str] = mapped_column(String(30), default="")  # long_call | debit_spread_call | ...
-    engine: Mapped[str] = mapped_column(String(20), default="manual")  # casino | ml | economist | manual
-    confidence: Mapped[float] = mapped_column(Float, default=0.0)
-    score: Mapped[float] = mapped_column(Float, default=0.0)
-    main_risk: Mapped[str] = mapped_column(Text, default="")
-    rationale: Mapped[str] = mapped_column(Text, default="")
-    invalidation: Mapped[str] = mapped_column(Text, default="")  # what would break the thesis
-    factors: Mapped[list] = mapped_column(JSON, default=list)  # factor breakdown, real vs proxy tagged
-    explanation_source: Mapped[str] = mapped_column(String(20), default="template")  # llm | template
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-
 
 class SystemState(Base):
     """Single-row system flags — global kill switch."""
@@ -158,24 +156,33 @@ class AppSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
-class MarketDataCache(Base):
-    """Latest quote snapshot per symbol, refreshed on demand."""
-    __tablename__ = "market_data_cache"
+class BacktestRun(Base):
+    """One backtest of one model, frozen with the exact parameters it ran with.
+
+    Parameters are snapshotted rather than read from the model, because the
+    model can be edited afterwards and a result must always say what produced
+    it."""
+    __tablename__ = "backtest_runs"
     id: Mapped[int] = mapped_column(primary_key=True)
-    symbol: Mapped[str] = mapped_column(String(20), unique=True, index=True)
-    price: Mapped[float] = mapped_column(Float)
-    source: Mapped[str] = mapped_column(String(20), default="yfinance")  # yfinance | mock
-    as_of: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    variant_id: Mapped[int] = mapped_column(ForeignKey("variants.id"), index=True)
+    params: Mapped[dict] = mapped_column(JSON, default=dict)
+    start: Mapped[str] = mapped_column(String(10))
+    end: Mapped[str] = mapped_column(String(10))
+    budget: Mapped[float] = mapped_column(Float)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    series: Mapped[dict] = mapped_column(JSON, default=dict)    # dates + equity / SPY / placebo
+    trades: Mapped[list] = mapped_column(JSON, default=list)    # most recent fills
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
-class CycleRun(Base):
-    """One tournament cycle: propose -> execute -> score -> kill weak -> scale
-    strong -> spawn new variants from winners. Append-only audit trail so the
-    kill/scale/spawn decisions are as inspectable as any individual trade."""
-    __tablename__ = "cycle_runs"
+class LabEvent(Base):
+    """The journal: every decision, order, fill, exit and error of the lab,
+    in plain language. Append-only."""
+    __tablename__ = "lab_events"
     id: Mapped[int] = mapped_column(primary_key=True)
-    status: Mapped[str] = mapped_column(String(20), default="running")  # running | done | failed
-    summary: Mapped[str] = mapped_column(Text, default="")
-    detail: Mapped[dict] = mapped_column(JSON, default=dict)  # per-variant actions taken, ranked leaderboard snapshot
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    variant_id: Mapped[int | None] = mapped_column(ForeignKey("variants.id"), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(20))       # decision | order | fill | exit | error | info | promote
+    symbol: Mapped[str] = mapped_column(String(20), default="")
+    message: Mapped[str] = mapped_column(Text, default="")
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

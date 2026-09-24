@@ -117,45 +117,16 @@ def test_paper_is_not_configurable():
         AlpacaPaperBroker(Credentials(api_key="PK", secret_key=None))
 
 
-# --- promotion guard --------------------------------------------------------
 
 def _variant(db, name) -> Variant:
-    v = Variant(name=name, engine="manual", status="active")
+    v = Variant(name=name, engine="stratege", stage="paper")
     db.add(v)
     db.commit()
     db.refresh(v)
-    db.add(PaperPortfolio(variant_id=v.id, initial_cash=100_000.0, cash=100_000.0))
+    db.add(PaperPortfolio(variant_id=v.id, initial_cash=10_000.0, cash=10_000.0))
     db.commit()
     db.refresh(v)
     return v
-
-
-def test_promotion_needs_working_credentials(db):
-    v = _variant(db, "Champion")
-    with pytest.raises(BrokerUnavailable, match="credentials are missing"):
-        venue.promote(db, v, "alpaca_paper")
-
-
-def test_only_one_variant_may_hold_the_venue(db, monkeypatch):
-    """One Alpaca account nets every position, so a second variant would make
-    per-variant attribution fictional."""
-    monkeypatch.setattr(venue, "broker_for", lambda _db, _name: object())
-    first, second = _variant(db, "Champion"), _variant(db, "Challenger")
-
-    venue.promote(db, first, "alpaca_paper")
-    assert first.portfolio.broker == "alpaca_paper"
-
-    with pytest.raises(ValueError, match="déjà routée"):
-        venue.promote(db, second, "alpaca_paper")
-
-    venue.promote(db, second, "alpaca_paper", force=True)
-    assert second.portfolio.broker == "alpaca_paper"
-
-
-def test_demoting_back_to_the_simulator_needs_no_credentials(db):
-    v = _variant(db, "Champion")
-    venue.promote(db, v, "sim")
-    assert v.portfolio.broker == "sim"
 
 
 # --- reconciliation ---------------------------------------------------------

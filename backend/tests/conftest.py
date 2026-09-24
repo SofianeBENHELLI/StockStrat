@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "4")
 
 import pytest
 from sqlalchemy import create_engine

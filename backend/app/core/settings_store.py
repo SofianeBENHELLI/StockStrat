@@ -52,22 +52,8 @@ class Field:
 
 
 FIELDS: tuple[Field, ...] = (
-    # ---- Exit rules (app/paper/exits.py) -----------------------------------
-    Field("trading.exit_stop_loss_pct", "Stop loss", "float", "trading", default=-8.0,
-          minimum=-90.0, maximum=-0.5, unit="%",
-          help="Clôture une position dès que son P&L latent descend à ce niveau. Valeur négative."),
-    Field("trading.exit_take_profit_pct", "Prise de bénéfice", "float", "trading", default=15.0,
-          minimum=0.5, maximum=500.0, unit="%",
-          help="Clôture une position dès que son P&L latent atteint ce niveau."),
-    Field("trading.exit_max_holding_days", "Durée de détention maximale", "int", "trading", default=30,
-          minimum=1, maximum=3650, unit="j",
-          help="Clôture une position ce nombre de jours calendaires après son ouverture, quel que soit son P&L."),
-    Field("trading.exits_enabled", "Sorties automatiques", "bool", "trading", default=True,
-          help="Désactivé, plus rien ne vend de soi-même : les positions s'accumulent, le P&L réalisé "
-               "reste vide et les règles tue/renforce du tournoi n'ont plus rien à juger."),
-
     # ---- Execution (app/paper/brokers.py) ----------------------------------
-    Field("execution.default_broker", "Broker des nouveaux portefeuilles", "enum", "execution", default="sim",
+    Field("execution.default_broker", "Broker des modèles déployés", "enum", "execution", default="alpaca_paper",
           choices=("sim", "alpaca_paper"),
           help="Qui exécute les ordres. « sim » est le simulateur de fills intégré "
                "(spread modélisé, slippage, fills partiels)."),
@@ -80,21 +66,25 @@ FIELDS: tuple[Field, ...] = (
           help="Sonde les ordres en attente, applique les règles de sortie et enregistre l'équité. "
                "Sans lui, l'équité n'est relevée que lorsqu'on lance un cycle à la main, ce qui fausse "
                "le Sharpe et le drawdown."),
+    Field("monitor.decision_minutes_before_close", "Heure de décision", "int", "monitor", default=15,
+          minimum=2, maximum=390, unit="min avant clôture",
+          help="Les modèles décident chaque jour ce nombre de minutes avant la clôture de Wall Street, "
+               "sur le dernier prix — l'équivalent réel de la clôture utilisée par le backtest."),
+    Field("execution.max_total_allocation", "Capital total alloué aux modèles", "float", "execution",
+          default=95_000.0, minimum=100.0, unit="$",
+          help="Plafond de la somme des budgets des modèles en paper. Le compte Alpaca a 100 000 $ de "
+               "cash et 400 000 $ de pouvoir d'achat avec marge : ce plafond garantit qu'on n'emprunte jamais."),
     Field("monitor.interval_seconds", "Période de sondage", "int", "monitor", default=60,
           env_attr="quote_refresh_seconds", minimum=10, maximum=3600, unit="s",
           help="Fréquence d'exécution du passage du monitor."),
 
     # ---- Market data (app/data/provider.py) --------------------------------
-    Field("data.market_data_provider", "Source des prix", "enum", "data", default="yfinance",
-          env_attr="market_data_provider", choices=("yfinance", "mock"),
-          help="« yfinance » est le flux réel, avec repli par symbole sur un flux mock clairement "
-               "étiqueté si la récupération échoue. « mock » force le flux hors ligne déterministe."),
+    Field("data.market_data_provider", "Source des prix", "enum", "data", default="alpaca",
+          choices=("alpaca", "mock"),
+          help="« alpaca » : dernier trade réel. Sans prix, un ordre est refusé — jamais passé sur un "
+               "prix inventé. « mock » : prix fictifs déterministes, pour les tests hors ligne uniquement."),
 
     # ---- Connections -------------------------------------------------------
-    Field("connections.anthropic_api_key", "Clé API Anthropic", "secret", "connections",
-          env_attr="anthropic_api_key",
-          help="Facultatif. Active les explications rédigées sur les trades exécutés (Haiku 4.5). "
-               "Sans clé, le texte templaté du moteur de règles est utilisé et chaque décision reste journalisée."),
     Field("connections.alpaca_api_key", "Alpaca paper — identifiant de clé API", "secret", "connections",
           env_attr="alpaca_api_key",
           help="Commence par PK. Généré depuis le tableau de bord Alpaca, côté Paper. "
@@ -108,9 +98,6 @@ FIELDS: tuple[Field, ...] = (
 BY_KEY: dict[str, Field] = {f.key: f for f in FIELDS}
 
 GROUP_LABELS: dict[str, tuple[str, str]] = {
-    "trading": ("Règles de sortie", "Quand une position ouverte est clôturée. C'est ce qui permet au "
-                                    "tournoi de réaliser son P&L, et donc ce qui donne un sens au hit "
-                                    "rate, au profit factor et aux seuils tue/renforce."),
     "execution": ("Exécution", "Qui exécute les ordres, et le plafond d'un ordre unitaire."),
     "monitor": ("Monitor", "La boucle de fond qui sonde les ordres en attente et enregistre l'équité."),
     "data": ("Données de marché", "D'où viennent les prix."),

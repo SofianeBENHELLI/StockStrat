@@ -36,6 +36,7 @@ def simulate_fill(
     *, symbol: str, side: str, qty: float, order_type: str,
     limit_price: float | None, market_price: float | None, order_id: int,
     unfilled_limit_status: str = "rejected",
+    allow_partial: bool = True,
 ) -> FillResult:
     """`unfilled_limit_status` is what a limit order that has not crossed yet
     resolves to. It defaults to "rejected", which is the original single-shot
@@ -73,7 +74,7 @@ def simulate_fill(
 
     # partial fill chance grows with size, capped so small orders (the common case) always fill
     partial_threshold = 0.85 - size_factor * 0.35
-    if rand > partial_threshold:
+    if allow_partial and rand > partial_threshold:
         fill_pct = 0.3 + (1 - rand) * 0.6
         filled_qty = round(qty * fill_pct, 4)
         return FillResult("partial_fill", filled_qty, fill_price, spread_bps, slippage_bps,

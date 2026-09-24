@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,7 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.core.db import init_db
 from app.monitor import scheduler
-from app.routers import backtest, ml, settings as settings_router, strategies, system, tournament, variants
+from app.routers import lab, settings as settings_router
+
+
+# scikit-learn's joblib cannot count physical cores inside the macOS sandbox and
+# warns on every fit; the logical count is what it would fall back to anyway.
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(os.cpu_count() or 4))
 
 
 @asynccontextmanager
@@ -21,7 +27,7 @@ async def lifespan(app: FastAPI):
         await scheduler.stop()
 
 
-app = FastAPI(title="Strategy Tournament API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="StockStrat Lab API", version="0.2.0", lifespan=lifespan)
 
 settings = get_settings()
 app.add_middleware(
@@ -32,12 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(variants.router)
-app.include_router(system.router)
-app.include_router(strategies.router)
-app.include_router(tournament.router)
-app.include_router(ml.router)
-app.include_router(backtest.router)
+app.include_router(lab.router)
 app.include_router(settings_router.router)
 
 
