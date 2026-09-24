@@ -262,8 +262,11 @@ def events(db: Session, m: Variant | None = None, limit: int = 60) -> list[dict]
     q = select(LabEvent).order_by(LabEvent.created_at.desc()).limit(limit)
     if m is not None:
         q = q.where(LabEvent.variant_id == m.id)
-    names = {v.id: v.name for v in db.scalars(select(Variant))}
-    return [{"id": e.id, "model_id": e.variant_id, "model": names.get(e.variant_id), "kind": e.kind,
+    variants = {v.id: v for v in db.scalars(select(Variant))}
+    names = {i: v.name for i, v in variants.items()}
+    linkable = {i for i, v in variants.items() if v.stage in ("paper", "retired")}
+    return [{"id": e.id, "model_id": e.variant_id, "model": names.get(e.variant_id),
+             "linkable": e.variant_id in linkable, "kind": e.kind,
              "symbol": e.symbol, "message": e.message, "data": e.data, "at": iso(e.created_at)}
             for e in db.scalars(q)]
 

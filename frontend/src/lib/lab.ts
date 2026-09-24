@@ -91,6 +91,7 @@ export type LabEvent = {
   id: number;
   model_id: number | null;
   model: string | null;
+  linkable?: boolean;
   kind: "decision" | "order" | "fill" | "exit" | "error" | "info" | "promote";
   symbol: string;
   message: string;

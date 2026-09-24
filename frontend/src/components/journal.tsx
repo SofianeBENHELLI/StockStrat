@@ -32,9 +32,11 @@ export default function Journal({ events, showModel = true, empty = "Rien pour l
               <p className="leading-snug">{e.message}</p>
               <p className="text-xs text-muted-foreground">
                 {showModel && e.model && e.model_id ? (
-                  <>
-                    <Link href={`/paper/${e.model_id}`} className="hover:underline">{e.model}</Link> ·{" "}
-                  </>
+                  e.linkable ? (
+                    <><Link href={`/paper/${e.model_id}`} className="hover:underline">{e.model}</Link> · </>
+                  ) : (
+                    <>{e.model} · </>
+                  )
                 ) : null}
                 {ago(e.at)}
               </p>
