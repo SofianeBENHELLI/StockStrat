@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core import settings_store
 from app.core.db import get_db
 from app.lab import data as market
-from app.lab import runner, service
+from app.lab import optimizer, runner, service
 from app.lab.profiles import PROFILES
 from app.models import Position, Variant
 from app.monitor import scheduler
@@ -237,3 +237,43 @@ def overview(db: Session = Depends(get_db)) -> dict:
 @router.post("/monitor/run-once")
 def monitor_run_once(force_decide: bool = False) -> dict:
     return scheduler.run_once(force_decide=force_decide)
+
+
+# --------------------------------------------------------------- optimiser --
+
+class OptimizeIn(BaseModel):
+    profile: str
+    start: date = date(2016, 1, 4)
+    split: date = date(2022, 1, 3)
+    budget: float = service.DEFAULT_BUDGET
+
+
+@router.get("/optimize/grid/{profile}")
+def optimize_grid(profile: str) -> dict:
+    try:
+        return {"profile": profile, "combinations": len(optimizer.combinations(profile)),
+                "grid": optimizer.GRIDS[profile]}
+    except KeyError:
+        raise HTTPException(404, "profil inconnu")
+
+
+@router.post("/optimize")
+def optimize(body: OptimizeIn) -> dict:
+    try:
+        return optimizer.start(body.profile, body.start, body.split, body.budget).as_dict(with_results=False)
+    except ValueError as exc:
+        raise _bad(exc)
+
+
+@router.get("/optimize/latest/{profile}")
+def optimize_latest(profile: str) -> dict | None:
+    job = optimizer.latest(profile)
+    return job.as_dict() if job else None
+
+
+@router.get("/optimize/{job_id}")
+def optimize_status(job_id: str) -> dict:
+    job = optimizer.get(job_id)
+    if job is None:
+        raise HTTPException(404, "calcul introuvable (le serveur a peut-être redémarré)")
+    return job.as_dict()

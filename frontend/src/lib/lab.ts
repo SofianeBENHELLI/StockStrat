@@ -336,3 +336,41 @@ export function ago(iso: string) {
 }
 
 export const STAGE_LABEL: Record<Stage, string> = { lab: "Labo", paper: "En paper", retired: "Retiré" };
+
+export type OptimizeResult = {
+  params: Record<string, unknown>;
+  in_sample_pnl_usd: number;
+  in_sample_drawdown_usd: number;
+  out_of_sample_pnl_usd: number;
+  out_of_sample_drawdown_usd: number;
+  out_of_sample_vs_placebo_usd: number;
+  out_of_sample_vs_spy_usd: number;
+  placebo_oos_usd: number;
+  spy_oos_usd: number;
+  sells: number;
+};
+
+export type OptimizeJob = {
+  id: string;
+  profile: ProfileKey;
+  start: string;
+  split: string;
+  budget: number;
+  total: number;
+  done: number;
+  status: "running" | "done" | "failed";
+  error: string | null;
+  elapsed_s: number;
+  results?: OptimizeResult[];
+  verdict: {
+    combinations?: number;
+    rank_correlation?: number;
+    reading?: string;
+    best_in_sample?: { params: Record<string, unknown>; in_sample_pnl_usd: number; out_of_sample_pnl_usd: number; out_of_sample_rank: number };
+    top5_in_sample_mean_oos_usd?: number;
+    median_oos_usd?: number;
+    placebo_oos_usd?: number;
+    spy_oos_usd?: number;
+    share_beating_placebo_oos_pct?: number;
+  };
+};

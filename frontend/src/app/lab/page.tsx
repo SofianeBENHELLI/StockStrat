@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Money from "@/components/money";
@@ -53,7 +53,12 @@ export default function LabPage() {
             sur 10 ans de données réelles, et déployez-le en paper s&apos;il le mérite.
           </p>
         </div>
-        {models.length === 0 && <Button onClick={seed}>Créer les 9 modèles de départ</Button>}
+        <div className="flex gap-2">
+          {models.length === 0 && <Button onClick={seed}>Créer les 9 modèles de départ</Button>}
+          <Link href="/lab/optimiser">
+            <Button variant="outline"><Sparkles className="size-3.5" /> Optimiser les paramètres</Button>
+          </Link>
+        </div>
       </header>
 
       {PROFILE_ORDER.map((key) => {

@@ -26,6 +26,11 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   cancelled: { label: "annulé", cls: "text-muted-foreground" },
 };
 
+function nextMonth() {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth() + 1, 1).toLocaleDateString("fr-FR", { month: "long" });
+}
+
 export default function PaperModel() {
   const { id } = useParams<{ id: string }>();
   const [d, setD] = useState<PaperDetail | null>(null);
@@ -195,8 +200,17 @@ export default function PaperModel() {
             <CardContent>
               {now.error ? (
                 <p className="text-sm text-red-700">{now.error}</p>
+              ) : p.open_orders > 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  {p.open_orders} ordre{p.open_orders > 1 ? "s" : ""} en attente d&apos;exécution
+ : aucune nouvelle décision tant qu&apos;ils ne sont pas exécutés — sinon le modèle
+                  achèterait deux fois ce qu&apos;il a déjà commandé.
+                </p>
               ) : pending.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Rien : le portefeuille est conforme à ce que veut le modèle.</p>
+                <p className="text-sm text-muted-foreground">
+                  Rien à faire : le portefeuille est conforme à ce que veut le modèle.
+                  {m.cadence === "monthly" && ` Prochain rééquilibrage à la première séance de ${nextMonth()} ; d'ici là, les stops sont vérifiés chaque jour.`}
+                </p>
               ) : (
                 <ul className="space-y-1 text-sm">
                   {pending.map((o, i) => (
