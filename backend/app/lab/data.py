@@ -181,13 +181,66 @@ def load_cached_panel(name: str = "stocks") -> Panel | None:
 @dataclass
 class LiveBar:
     symbol: str
-    price: float          # last trade
+    price: float          # last trade (IEX, real time)
     open: float
     high: float
     low: float
-    volume: float
+    volume: float         # consolidated, projected to a full session — NaN when unknown
     prev_close: float | None
     at: datetime
+    volume_fraction: float = 1.0   # share of a typical session's volume the projection is based on
+
+
+SIP_DELAY = timedelta(minutes=16)  # the free plan serves consolidated data older than 15 minutes
+
+
+def session_volume_fraction(minutes_since_open: float) -> float:
+    """Typical share of a US session's volume traded by a given minute.
+
+    Intraday volume is U-shaped: heavy in the first half hour, thin at midday,
+    heavy again into the close (the closing auction alone is often ~10%). This
+    piecewise-linear approximation — 15% by 10:00, 78% by 15:30, 100% at 16:00
+    — is enough to project a partial day to a full one, which is what the
+    volume signals were computed on in the backtest. It is an estimate, and it
+    is only needed during the session: after the close the bar is complete.
+    """
+    m = minutes_since_open
+    if m <= 0:
+        return 0.0
+    if m <= 30:
+        return 0.15 * m / 30
+    if m <= 360:
+        return 0.15 + 0.63 * (m - 30) / 330
+    if m < 390:
+        return 0.78 + 0.22 * (m - 360) / 30
+    return 1.0
+
+
+def _sip_today(client, symbols: list[str], day: date) -> tuple[dict, float]:
+    """Today's consolidated daily bar, as of 16 minutes ago, and the share of
+    the session it covers."""
+    from alpaca.data.enums import DataFeed
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    from zoneinfo import ZoneInfo
+
+    ny = ZoneInfo("America/New_York")
+    end = datetime.now(timezone.utc) - SIP_DELAY
+    opened = datetime.combine(day, datetime.min.time(), tzinfo=ny).replace(hour=9, minute=30)
+    fraction = session_volume_fraction((end - opened).total_seconds() / 60)
+    out: dict = {}
+    for i in range(0, len(symbols), 100):
+        req = StockBarsRequest(symbol_or_symbols=symbols[i:i + 100], timeframe=TimeFrame.Day,
+                               start=datetime.combine(day, datetime.min.time(), tzinfo=ny), end=end,
+                               feed=DataFeed.SIP)
+        try:
+            bars = client.get_stock_bars(req)
+        except Exception:
+            continue
+        for sym, rows in bars.data.items():
+            if rows:
+                out[sym] = rows[-1]
+    return out, fraction
 
 
 def live_bars(symbols: list[str]) -> dict[str, LiveBar]:
@@ -195,24 +248,43 @@ def live_bars(symbols: list[str]) -> dict[str, LiveBar]:
 
     This is what lets the paper runner call the exact same decision code as
     the backtest: it appends one more row — today — to the historical panel.
+
+    Two feeds, on purpose. The *price* is the last IEX trade: real time, and
+    IEX prices track the national best bid/offer. The *volume* must not come
+    from IEX: that one exchange sees ~3% of the day's shares (788k of 24.5M
+    for AAPL on the day this was written), while the historical panel holds
+    consolidated volume — a volume signal would read ~30x too low and never
+    fire in paper while firing in the backtest. So volume comes from the
+    consolidated bar (16 minutes behind on the free plan), projected to a full
+    session; if that bar is unavailable the volume is left unknown (NaN), and
+    no volume signal can trigger on it.
     """
     from alpaca.data.enums import DataFeed
     from alpaca.data.requests import StockSnapshotRequest
+    from zoneinfo import ZoneInfo
 
     client = _stock_client()
+    day = datetime.now(ZoneInfo("America/New_York")).date()
+    sip, fraction = _sip_today(client, symbols, day)
     out: dict[str, LiveBar] = {}
     for i in range(0, len(symbols), 100):
         chunk = symbols[i:i + 100]
         snaps = client.get_stock_snapshot(StockSnapshotRequest(symbol_or_symbols=chunk, feed=DataFeed.IEX))
         for sym, s in snaps.items():
-            trade, bar, prev = s.latest_trade, s.daily_bar, s.previous_daily_bar
-            if trade is None or bar is None:
+            trade, iex_bar, prev = s.latest_trade, s.daily_bar, s.previous_daily_bar
+            if trade is None or iex_bar is None:
                 continue
-            out[sym] = LiveBar(
-                symbol=sym, price=float(trade.price), open=float(bar.open), high=max(float(bar.high), float(trade.price)),
-                low=min(float(bar.low), float(trade.price)), volume=float(bar.volume),
-                prev_close=float(prev.close) if prev is not None else None, at=trade.timestamp,
-            )
+            price = float(trade.price)
+            bar = sip.get(sym)
+            if bar is not None and bar.timestamp.astimezone(ZoneInfo("America/New_York")).date() == day and fraction > 0:
+                o, h, lo = float(bar.open), max(float(bar.high), price), min(float(bar.low), price)
+                volume = float(bar.volume) / fraction
+            else:
+                o, h, lo = float(iex_bar.open), max(float(iex_bar.high), price), min(float(iex_bar.low), price)
+                volume = float("nan")
+            out[sym] = LiveBar(symbol=sym, price=price, open=o, high=h, low=lo, volume=volume,
+                               prev_close=float(prev.close) if prev is not None else None, at=trade.timestamp,
+                               volume_fraction=fraction)
     return out
 
 

@@ -526,7 +526,7 @@ function KillSwitchCard({
           </Badge>
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          Bloque tout nouvel ordre, quelle que soit la variante ou le broker. Les positions
+          Bloque tout nouvel ordre, quel que soit le modèle ou le broker. Les positions
           existantes ne sont pas liquidées.
         </p>
       </CardHeader>
