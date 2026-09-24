@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -50,18 +51,32 @@ def _ensure_column(table: str, column: str, ddl_type: str) -> None:
             conn.commit()
 
 
-def init_db() -> None:
-    from app import models  # noqa: F401  (register tables on Base.metadata)
+BASELINE = "0001"
 
-    Base.metadata.create_all(bind=engine)
+
+def _alembic_config():
+    from pathlib import Path
+
+    from alembic.config import Config
+
+    root = Path(__file__).resolve().parents[2]
+    cfg = Config(str(root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(root / "migrations"))
+    return cfg
+
+
+def _legacy_columns() -> None:
+    """Databases created before Alembic grew by hand-added columns. Bring such
+    a database up to the baseline shape before stamping it; on a database that
+    already has them, or lacks the table, each step is a no-op."""
     _ensure_column("decision_log", "explanation_source", "TEXT DEFAULT 'template'")
     _ensure_column("variants", "scaled", "BOOLEAN DEFAULT 0")
     _ensure_column("paper_portfolios", "broker", "TEXT DEFAULT 'sim'")
     _ensure_column("paper_orders", "broker", "TEXT DEFAULT 'sim'")
     _ensure_column("paper_orders", "broker_order_id", "TEXT")
     _ensure_column("paper_orders", "exit_reason", "TEXT")
-    # The lab. Existing rows predate it (the old tournament), so the new stage
-    # column defaults them to 'archived': kept on disk, out of every screen.
+    # The lab. Rows from the old tournament default to 'archived': kept on
+    # disk, out of every screen.
     _ensure_column("variants", "params", "JSON DEFAULT '{}'")
     _ensure_column("variants", "budget", "FLOAT DEFAULT 10000")
     _ensure_column("variants", "stage", "TEXT DEFAULT 'archived'")
@@ -71,7 +86,51 @@ def init_db() -> None:
     _ensure_column("paper_orders", "stop_price", "FLOAT")
     _ensure_column("paper_orders", "time_in_force", "TEXT DEFAULT 'day'")
     _ensure_column("paper_orders", "purpose", "TEXT DEFAULT 'trade'")
-    _secure_storage()
+
+
+def init_db() -> None:
+    """Bring the database to the current schema, whatever state it is in.
+
+    - managed by Alembic already: upgrade to head;
+    - created before Alembic (tables but no version): complete the hand-added
+      columns, stamp it at the baseline — nothing is recreated — then upgrade;
+    - empty: let the migrations create everything.
+    Future schema changes are Alembic revisions (`alembic revision
+    --autogenerate`), never edits here."""
+    from alembic import command
+    from sqlalchemy import inspect
+
+    from app import models  # noqa: F401  (register tables on Base.metadata)
+
+    cfg = _alembic_config()
+    # The worker and the API start together and both call this. Without a lock
+    # both saw "no version yet" and both stamped it; the second crashed on the
+    # unique version row and the API never came up. A file lock serialises
+    # them: the second waits, then finds the database already current.
+    with _migration_lock():
+        tables = set(inspect(engine).get_table_names())
+        with engine.begin() as conn:
+            cfg.attributes["connection"] = conn
+            if "alembic_version" not in tables and "variants" in tables:
+                _legacy_columns()
+                command.stamp(cfg, BASELINE)
+            command.upgrade(cfg, "head")
+        _secure_storage()
+
+
+@contextmanager
+def _migration_lock():
+    import fcntl
+
+    from app.core.paths import DATA_DIR
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(DATA_DIR / ".migrate.lock", "w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _secure_storage() -> None:
