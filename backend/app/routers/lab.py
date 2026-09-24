@@ -199,9 +199,13 @@ def paper_detail(model_id: int, db: Session = Depends(get_db)) -> dict:
         now = runner.evaluate(db, m).as_dict()
     except (ValueError, market.DataUnavailable) as exc:
         now = {"error": str(exc)}
+    from app.lab.feedback import model_feedback
+    model = service.serialize(db, m)
+    replay = service.replay(db, m)
     return {
-        "model": service.serialize(db, m), "now": now, "curve": service.equity_curve(db, m),
-        "replay": service.replay(db, m), "orders": service.orders(db, m), "events": service.events(db, m, 100),
+        "model": model, "now": now, "curve": service.equity_curve(db, m), "replay": replay,
+        "orders": service.orders(db, m), "events": service.events(db, m, 100),
+        "feedback": model_feedback(db, m, replay, model["paper"]["pnl_usd"]),
     }
 
 
@@ -232,6 +236,13 @@ def overview(db: Session = Depends(get_db)) -> dict:
         "events": service.events(db, None, 40),
         "now": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.get("/execution")
+def execution(db: Session = Depends(get_db)) -> dict:
+    """Measured execution cost across every model in paper."""
+    from app.lab.feedback import execution_costs
+    return execution_costs(db)
 
 
 @router.get("/exposure")

@@ -15,7 +15,7 @@ import ProfileChip from "@/components/profile-chip";
 import Stat from "@/components/stat";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { PROFILE_META, STAGE_LABEL, pct, qty, usd, type PaperDetail } from "@/lib/lab";
+import { PROFILE_META, STAGE_LABEL, pct, qty, usd, type Feedback, type PaperDetail } from "@/lib/lab";
 
 const STATUS: Record<string, { label: string; cls: string }> = {
   filled: { label: "exécuté", cls: "text-emerald-700" },
@@ -26,6 +26,45 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   rejected: { label: "refusé", cls: "text-red-700" },
   cancelled: { label: "annulé", cls: "text-muted-foreground" },
 };
+
+function FeedbackCard({ f, modelId }: { f: Feedback; modelId: number }) {
+  const s = f.costs?.in_session;
+  const o = f.costs?.overnight;
+  const tone = { action: "bg-violet-500/10 text-violet-900", warning: "bg-amber-500/10 text-amber-900", info: "bg-muted text-muted-foreground" };
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Ce que le réel apprend au backtest</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Le coût d&apos;exécution est l&apos;écart entre le prix sur lequel l&apos;ordre a été calculé et le prix obtenu. Les ordres
+          passés hors séance sont comptés à part : leur écart contient le mouvement de la nuit.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Stat label="Coût supposé au backtest">{f.assumed_cost_bps} pb</Stat>
+          <Stat label="Coût mesuré en séance" hint={s && s.n ? `${s.n} ordre${s.n > 1 ? "s" : ""} · ${usd(s.cost_usd, { signed: false, cents: true })} au total` : "aucun ordre en séance encore"}>
+            {s?.weighted_bps == null ? "—" : `${s.weighted_bps.toFixed(1).replace(".", ",")} pb`}
+          </Stat>
+          <Stat label="Écart d'ouverture (hors séance)" hint={o && o.n ? `${o.n} ordre${o.n > 1 ? "s" : ""} — mouvement de marché, pas un coût` : "—"}>
+            {o?.weighted_bps == null ? "—" : `${o.weighted_bps.toFixed(1).replace(".", ",")} pb`}
+          </Stat>
+          <Stat label="Réel − backtest rejoué" hint={f.gap ? `dont exécution ${usd(f.gap.execution_usd, { signed: true })}, reste ${usd(f.gap.other_usd, { signed: true })}` : "après deux séances"}>
+            {f.gap ? <Money value={f.gap.gap_usd} /> : "—"}
+          </Stat>
+        </div>
+        {f.suggestions?.map((sg, i) => (
+          <p key={i} className={cn("rounded-lg px-3 py-2 text-sm", tone[sg.level])}>
+            {sg.text}
+            {sg.suggested_cost_bps != null && (
+              <> <Link href={`/lab/${modelId}`} className="font-medium underline">Ouvrir au labo</Link></>
+            )}
+          </p>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
 
 function nextMonth() {
   const d = new Date();
@@ -150,6 +189,8 @@ export default function PaperModel() {
           )}
         </CardContent>
       </Card>
+
+      {d.feedback?.available && <FeedbackCard f={d.feedback} modelId={m.id} />}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <div className="space-y-6">

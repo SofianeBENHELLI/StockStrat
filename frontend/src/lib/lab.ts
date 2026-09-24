@@ -259,6 +259,16 @@ export type PaperOrder = {
   stop_price?: number | null;
 };
 
+export type CostStats = { n: number; avg_bps: number | null; median_bps: number | null; weighted_bps: number | null; cost_usd: number };
+
+export type Feedback = {
+  available: boolean;
+  assumed_cost_bps?: number;
+  costs?: { in_session: CostStats; overnight: CostStats; recent: { id: number; symbol: string; side: string; bps: number; usd: number; in_session: boolean; at: string }[] };
+  gap?: { paper_pnl_usd: number; replay_pnl_usd: number; gap_usd: number; execution_usd: number; other_usd: number };
+  suggestions?: { level: "info" | "action" | "warning"; text: string; suggested_cost_bps?: number }[];
+};
+
 export type PaperDetail = {
   model: Model;
   now: PlanPreview;
@@ -266,6 +276,7 @@ export type PaperDetail = {
   replay: { available: boolean; reason?: string; dates?: string[]; equity?: number[]; pnl_usd?: number; max_drawdown_usd?: number };
   orders: PaperOrder[];
   events: LabEvent[];
+  feedback?: Feedback;
 };
 
 // ------------------------------------------------------------------ display --
