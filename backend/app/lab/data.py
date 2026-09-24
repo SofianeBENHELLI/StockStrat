@@ -150,8 +150,23 @@ def refresh(symbols: list[str], name: str = "stocks", force: bool = False) -> pd
             parts.append(_fetch_bars(new_syms, HISTORY_START))
         long = (pd.concat(parts, ignore_index=True)
                 .drop_duplicates(subset=["symbol", "day"], keep="last"))
+    long = _completed_sessions_only(long)
     long = long.sort_values(["symbol", "day"]).reset_index(drop=True)
     long.to_pickle(path)
+    return long
+
+
+def _completed_sessions_only(long: pd.DataFrame) -> pd.DataFrame:
+    """The cache holds finished sessions only. During the session, Alpaca's
+    daily bar for today is partial (and 16 minutes behind); stored as if it
+    were final, it would give every backtest run that afternoon a truncated
+    last day. Today's row is the runner's job, via `with_live_row`, with a
+    projected volume — never the cache's."""
+    from zoneinfo import ZoneInfo
+
+    now = datetime.now(ZoneInfo("America/New_York"))
+    if now.hour * 60 + now.minute < 16 * 60 + 30:
+        return long[long["day"] < pd.Timestamp(now.date())]
     return long
 
 

@@ -138,3 +138,23 @@ def test_a_skipped_decision_is_journalled_once_not_every_minute(db, market):
         runner.decide_and_execute(db, m)
     skipped = db.query(LabEvent).filter(LabEvent.variant_id == m.id, LabEvent.message.like("%décision reportée%"))
     assert skipped.count() == 1
+
+
+def test_a_reconciliation_gap_is_reported_only_if_it_persists(db, market, monkeypatch):
+    service.seed_defaults(db)
+    answers = iter([{"ok": False, "detail": "1 écart", "differences": []},
+                    {"ok": True, "detail": "ok", "differences": []},
+                    {"ok": False, "detail": "1 écart", "differences": []},
+                    {"ok": False, "detail": "1 écart", "differences": []}])
+    monkeypatch.setattr("app.paper.venue.reconcile", lambda _db, *a: next(answers))
+    scheduler.STATE.reconcile_failures = 0
+    scheduler.STATE.last_reconcile_at = None
+    errors = lambda: db.query(LabEvent).filter(LabEvent.message.like("Réconciliation%")).count()  # noqa: E731
+
+    scheduler.run_pass(db)          # transient gap
+    scheduler.run_pass(db)          # gone at the re-check: nothing reported
+    assert errors() == 0
+    scheduler.STATE.last_reconcile_at = None
+    scheduler.run_pass(db)          # a gap again...
+    scheduler.run_pass(db)          # ...that survives the re-check
+    assert errors() == 1

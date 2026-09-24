@@ -56,6 +56,7 @@ class MonitorState:
     reconciliation: dict = field(default_factory=dict)
     last_snapshot_at: datetime | None = None
     last_reconcile_at: datetime | None = None
+    reconcile_failures: int = 0
 
 
 STATE = MonitorState()
@@ -136,12 +137,22 @@ def run_pass(db: Session, force_decide: bool = False) -> dict:
         db.commit()
         STATE.last_snapshot_at = now
 
-    if STATE.last_reconcile_at is None or (now - STATE.last_reconcile_at).total_seconds() >= RECONCILE_EVERY_S:
+    # A mismatch is re-checked a minute later before it is reported: an order
+    # can fill at Alpaca between this pass's poll and its reconciliation, and
+    # that transient gap closes on its own at the next poll. Only a gap that
+    # survives two consecutive checks is a real disagreement.
+    recheck = STATE.reconcile_failures > 0
+    if recheck or STATE.last_reconcile_at is None or \
+            (now - STATE.last_reconcile_at).total_seconds() >= RECONCILE_EVERY_S:
         try:
             STATE.reconciliation = {**venue.reconcile(db), "at": now.isoformat()}
-            if not STATE.reconciliation.get("ok"):
-                runner.journal(db, None, "error", f"Réconciliation : {STATE.reconciliation.get('detail')}",
-                               data={"differences": STATE.reconciliation.get("differences", [])})
+            if STATE.reconciliation.get("ok"):
+                STATE.reconcile_failures = 0
+            else:
+                STATE.reconcile_failures += 1
+                if STATE.reconcile_failures == 2:
+                    runner.journal(db, None, "error", f"Réconciliation : {STATE.reconciliation.get('detail')}",
+                                   data={"differences": STATE.reconciliation.get("differences", [])})
         except Exception as exc:
             STATE.reconciliation = {"ok": False, "detail": str(exc), "at": now.isoformat()}
         STATE.last_reconcile_at = now
