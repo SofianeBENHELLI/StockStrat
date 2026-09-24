@@ -126,3 +126,15 @@ def test_the_overview_reports_dollars(db, market):
     card = service.serialize(db, m)
     assert set(card["paper"]) >= {"equity", "pnl_usd", "today_usd", "max_drawdown_usd", "positions"}
     assert card["paper"]["equity"] == pytest.approx(10_000, rel=0.02)
+
+
+def test_a_skipped_decision_is_journalled_once_not_every_minute(db, market):
+    m = _stratege(db)
+    service.promote(db, m)
+    db.add(PaperOrder(portfolio_id=m.portfolio.id, symbol="XLE", side="buy", qty=1, status="open",
+                      broker="sim", broker_order_id="sim-x", order_type="limit", limit_price=0.01))
+    db.commit()
+    for _ in range(5):
+        runner.decide_and_execute(db, m)
+    skipped = db.query(LabEvent).filter(LabEvent.variant_id == m.id, LabEvent.message.like("%décision reportée%"))
+    assert skipped.count() == 1

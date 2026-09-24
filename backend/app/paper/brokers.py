@@ -51,6 +51,7 @@ class OrderSpec:
     order_type: str = "market"     # market | limit
     limit_price: float | None = None
     client_order_id: str | None = None  # our tag, visible in the Alpaca dashboard
+    extended_hours: bool = False        # pre/after-market session; Alpaca accepts it on limit orders only
 
 
 @dataclass
@@ -205,7 +206,11 @@ class AlpacaPaperBroker:
             if spec.order_type == "limit":
                 if spec.limit_price is None:
                     return BrokerOrderResult("", "rejected", detail="limit order without limit price")
-                request = LimitOrderRequest(**common, limit_price=spec.limit_price)
+                request = LimitOrderRequest(**common, limit_price=round(spec.limit_price, 2),
+                                            extended_hours=spec.extended_hours)
+            elif spec.extended_hours:
+                return BrokerOrderResult("", "rejected",
+                                         detail="outside regular hours Alpaca only accepts limit orders")
             else:
                 request = MarketOrderRequest(**common)
             return self._translate(self._client.submit_order(request))

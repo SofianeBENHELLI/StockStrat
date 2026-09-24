@@ -41,7 +41,17 @@ SETTLE_WAIT_SECONDS = 25
 
 
 def journal(db: Session, variant: Variant | None, kind: str, message: str, symbol: str = "",
-            data: dict | None = None) -> None:
+            data: dict | None = None, once_per_day: bool = False) -> None:
+    """Append to the journal. `once_per_day` suppresses an identical message
+    already written today — for conditions the monitor re-checks every minute
+    (a pending order during the decision window) that would otherwise fill the
+    journal with the same line fifteen times."""
+    if once_per_day:
+        last = db.scalar(select(LabEvent).where(
+            LabEvent.variant_id == (variant.id if variant else None), LabEvent.message == message)
+            .order_by(LabEvent.created_at.desc()).limit(1))
+        if last is not None and last.created_at.date() == datetime.now(timezone.utc).date():
+            return
     db.add(LabEvent(variant_id=variant.id if variant else None, kind=kind, symbol=symbol,
                     message=message, data=data or {}))
     db.commit()
@@ -148,7 +158,7 @@ def decide_and_execute(db: Session, variant: Variant, force_rebalance: bool = Fa
     if pending:
         p = evaluate(db, variant, force_rebalance)
         p.skipped = f"{len(pending)} ordre(s) encore en attente — décision reportée"
-        journal(db, variant, "info", p.skipped)
+        journal(db, variant, "info", p.skipped, once_per_day=True)
         return p
 
     p = evaluate(db, variant, force_rebalance)
@@ -203,7 +213,7 @@ def decide_and_execute(db: Session, variant: Variant, force_rebalance: bool = Fa
         variant.last_rebalance_on = today
     if not p.live:
         journal(db, variant, "info", "Flux de prix en direct indisponible : décision prise sur la dernière "
-                                     "clôture connue.")
+                                     "clôture connue.", once_per_day=True)
     db.commit()
     if not p.orders:
         journal(db, variant, "decision", "Aucun mouvement : rien ne justifie d'agir aujourd'hui.")

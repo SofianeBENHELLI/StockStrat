@@ -106,6 +106,7 @@ def submit_order(
     db: Session, *, portfolio: PaperPortfolio, symbol: str, side: str, qty: float,
     order_type: str = "market", limit_price: float | None = None,
     max_loss: float | None = None, rationale: str = "", exit_reason: str | None = None,
+    extended_hours: bool = False,
 ) -> PaperOrder:
     symbol = symbol.upper()
     quotes = latest_prices([symbol])
@@ -132,7 +133,8 @@ def submit_order(
 
     spec = OrderSpec(order_id=order.id, symbol=symbol, side=side, qty=qty,
                      order_type=order_type, limit_price=limit_price,
-                     client_order_id=f"ss-m{portfolio.variant_id}-o{order.id}")
+                     client_order_id=f"ss-m{portfolio.variant_id}-o{order.id}",
+                     extended_hours=extended_hours)
     result = broker.submit(spec, market_price)
 
     order.broker_order_id = result.broker_order_id
