@@ -91,3 +91,26 @@ def monitor_run_once() -> dict:
     """Run one monitor pass now. Same code path as the loop, so this is also the
     way to exercise polling and exits when the loop is switched off."""
     return scheduler.run_once()
+
+
+@router.post("/notify/topic")
+def generate_topic(db: Session = Depends(get_db)) -> dict:
+    """Create a fresh random ntfy topic. Returned once, here, so it can be
+    subscribed to on the phone; afterwards it is masked like any secret."""
+    from app import notify
+    topic = notify.new_topic()
+    settings_store.apply_updates(db, {"notify.ntfy_topic": topic})
+    server = str(settings_store.resolve(db, "notify.ntfy_server")).rstrip("/")
+    return {"topic": topic, "subscribe_url": f"{server}/{topic}"}
+
+
+@router.post("/notify/test")
+def test_notification(db: Session = Depends(get_db)) -> dict:
+    from app import notify
+    if not settings_store.resolve(db, "notify.enabled"):
+        raise HTTPException(status_code=409, detail="les notifications sont désactivées")
+    delivered = notify.send(db, "StockStrat · test", "Les notifications fonctionnent. Tu recevras ici le "
+                                                     "résumé du soir, les stops et les erreurs.")
+    if not delivered:
+        raise HTTPException(status_code=502, detail="aucun canal n'a accepté le message (sujet ntfy ou Telegram manquant ?)")
+    return {"delivered": delivered}

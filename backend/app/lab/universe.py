@@ -58,3 +58,33 @@ ALL_STOCKS = sorted(set(MEGA_CAPS) | set(THEMES) | {BENCHMARK})
 
 def label(symbol: str) -> str:
     return THEMES.get(symbol, symbol)
+
+
+# Sector of every tradable symbol, for the account-level exposure view.
+# GICS sectors, with one deliberate deviation: semiconductors are split out of
+# technology, because that is where several models concentrate at once (the
+# Matheux's momentum names and the Stratège's SMH) and a "Technology" bucket
+# would hide it. Theme ETFs map to the sector they are a bet on.
+SECTORS: dict[str, str] = {
+    **{s: "Semi-conducteurs" for s in ("NVDA", "AVGO", "INTC", "AMD", "QCOM", "TXN", "AMAT", "LRCX", "MU", "SMH")},
+    **{s: "Technologie" for s in ("AAPL", "MSFT", "CSCO", "ACN", "ADBE", "CRM", "ORCL", "IBM", "INTU", "XLK")},
+    **{s: "Communication" for s in ("GOOGL", "META", "NFLX", "DIS", "T", "VZ", "CMCSA", "XLC")},
+    **{s: "Consommation discrétionnaire" for s in ("AMZN", "TSLA", "HD", "MCD", "NKE", "LOW", "SBUX", "BKNG", "XLY")},
+    **{s: "Consommation de base" for s in ("PG", "KO", "PEP", "COST", "WMT", "TGT", "MO", "PM", "MDLZ", "CL", "KMB",
+                                           "GIS", "XLP")},
+    **{s: "Finance" for s in ("JPM", "V", "MA", "BAC", "WFC", "C", "GS", "MS", "AXP", "BLK", "SCHW", "XLF")},
+    **{s: "Santé" for s in ("JNJ", "UNH", "PFE", "ABBV", "MRK", "LLY", "TMO", "DHR", "ABT", "MDT", "BMY", "AMGN",
+                            "GILD", "ISRG", "SYK", "CVS", "CI", "ELV", "XLV", "IBB")},
+    **{s: "Industrie" for s in ("CAT", "DE", "HON", "GE", "MMM", "UPS", "UNP", "LMT", "RTX", "BA", "NOC", "GD", "ADP",
+                                "XLI", "ITA")},
+    **{s: "Énergie" for s in ("XOM", "CVX", "COP", "SLB", "EOG", "XLE", "URA", "ICLN")},
+    **{s: "Matériaux" for s in ("LIN", "APD", "XLB", "COPX")},
+    **{s: "Services publics" for s in ("NEE", "DUK", "SO", "XLU")},
+    **{s: "Immobilier" for s in ("AMT", "PLD", "SPG", "XLRE")},
+    "GLD": "Or",
+    "TLT": "Obligations",
+}
+
+
+def sector(symbol: str) -> str:
+    return SECTORS.get(symbol, "Autre")

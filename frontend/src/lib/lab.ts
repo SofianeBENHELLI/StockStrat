@@ -61,6 +61,7 @@ export type PaperStats = {
   max_drawdown_usd: number;
   positions: number;
   open_orders: number;
+  protected?: number;
   broker: string;
   sparkline: number[];
 };
@@ -253,6 +254,9 @@ export type PaperOrder = {
   broker: string;
   broker_order_id: string | null;
   created_at: string;
+  purpose?: "trade" | "safety_stop";
+  order_type?: string;
+  stop_price?: number | null;
 };
 
 export type PaperDetail = {
@@ -374,4 +378,12 @@ export type OptimizeJob = {
     spy_oos_usd?: number;
     share_beating_placebo_oos_pct?: number;
   };
+};
+
+export type Exposure = {
+  total: number;
+  threshold_pct: number;
+  symbols: { symbol: string; label: string; sector: string; held: number; pending: number; value: number; pct: number; models: string[] }[];
+  sectors: { sector: string; value: number; pct: number; symbols: number; models: number }[];
+  alerts: { sector: string; pct: number; models: number }[];
 };

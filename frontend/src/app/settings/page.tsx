@@ -189,6 +189,7 @@ export default function SettingsPage() {
             ))}
             {group.key === "execution" && <BrokerList brokers={data.brokers} />}
             {group.key === "connections" && <AlpacaConnection dirty={dirty} />}
+            {group.key === "notify" && <NotifyHelpers onChange={load} />}
           </CardContent>
         </Card>
       ))}
@@ -336,6 +337,54 @@ function FieldControl({
         onChange={(e) => onChange(numeric ? Number(e.target.value) : e.target.value)}
       />
       {field.unit && <span className="text-sm text-muted-foreground shrink-0">{field.unit}</span>}
+    </div>
+  );
+}
+
+function NotifyHelpers({ onChange }: { onChange: () => void }) {
+  const [topic, setTopic] = useState<{ topic: string; subscribe_url: string } | null>(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function generate() {
+    setBusy(true);
+    try {
+      setTopic(await api<{ topic: string; subscribe_url: string }>("/api/settings/notify/topic", { method: "POST" }));
+      onChange();
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function test() {
+    setBusy(true);
+    try {
+      const r = await api<{ delivered: string[] }>("/api/settings/notify/test", { method: "POST" });
+      setMsg({ ok: true, text: `Envoyé via ${r.delivered.join(" et ")}.` });
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof ApiError ? e.message : "Échec de l'envoi." });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="rounded-lg border p-3 space-y-2">
+      <p className="text-sm font-medium">Recevoir les notifications sur ton téléphone</p>
+      <ol className="list-decimal space-y-0.5 pl-5 text-xs text-muted-foreground">
+        <li>Installe l&apos;appli <b>ntfy</b> (iOS ou Android, gratuite, sans compte).</li>
+        <li>Génère un sujet ci-dessous, puis abonne-toi à ce sujet dans l&apos;appli.</li>
+        <li>Active les notifications, enregistre, et envoie un test.</li>
+      </ol>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={generate} disabled={busy}>Générer un sujet</Button>
+        <Button variant="outline" size="sm" onClick={test} disabled={busy}>Envoyer un test</Button>
+      </div>
+      {topic && (
+        <p className="text-xs">
+          Sujet : <code className="rounded bg-muted px-1">{topic.topic}</code> — à noter maintenant, il ne sera plus
+          réaffiché. Lien d&apos;abonnement : <a className="underline" href={topic.subscribe_url} target="_blank" rel="noreferrer">{topic.subscribe_url}</a>
+        </p>
+      )}
+      {msg && <p className={msg.ok ? "text-xs text-emerald-700" : "text-xs text-red-700"}>{msg.text}</p>}
     </div>
   );
 }

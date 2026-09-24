@@ -55,6 +55,12 @@ def journal(db: Session, variant: Variant | None, kind: str, message: str, symbo
     db.add(LabEvent(variant_id=variant.id if variant else None, kind=kind, symbol=symbol,
                     message=message, data=data or {}))
     db.commit()
+    if kind in ("exit", "error", "promote", "fill"):
+        from app import notify
+        title = {"exit": "Sortie", "error": "Problème", "promote": "Modèle", "fill": "Exécution"}[kind]
+        notify.send(db, f"StockStrat · {title}" + (f" · {variant.name}" if variant else ""), message,
+                    priority="high" if kind == "error" else "default", kind=kind,
+                    tags=["warning"] if kind == "error" else [])
 
 
 def session_date() -> pd.Timestamp:

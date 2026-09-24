@@ -21,6 +21,7 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   filled: { label: "exécuté", cls: "text-emerald-700" },
   partial_fill: { label: "partiel", cls: "text-emerald-700" },
   open: { label: "en attente", cls: "text-blue-700" },
+  new: { label: "posé", cls: "text-violet-700" },
   proposed: { label: "proposé", cls: "text-muted-foreground" },
   rejected: { label: "refusé", cls: "text-red-700" },
   cancelled: { label: "annulé", cls: "text-muted-foreground" },
@@ -248,8 +249,13 @@ export default function PaperModel() {
                       <TableCell className="tabular-nums text-muted-foreground">
                         {new Date(o.created_at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
                       </TableCell>
-                      <TableCell className={o.side === "buy" ? "text-blue-700" : "text-amber-700"}>{o.side === "buy" ? "Achat" : "Vente"}</TableCell>
-                      <TableCell className="font-medium">{o.symbol}</TableCell>
+                      <TableCell className={o.side === "buy" ? "text-blue-700" : "text-amber-700"}>
+                        {o.purpose === "safety_stop" ? "Stop de secours" : o.side === "buy" ? "Achat" : "Vente"}
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        {o.symbol}
+                        {o.purpose === "safety_stop" && o.stop_price ? <span className="ml-1 text-xs font-normal text-muted-foreground">à {usd(o.stop_price, { signed: false, cents: true })}</span> : null}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">{qty(o.qty)}</TableCell>
                       <TableCell className="text-right tabular-nums">{o.filled_avg_price ? usd(o.filled_avg_price, { signed: false, cents: true }) : "—"}</TableCell>
                       <TableCell className={STATUS[o.status]?.cls}>{STATUS[o.status]?.label ?? o.status}</TableCell>

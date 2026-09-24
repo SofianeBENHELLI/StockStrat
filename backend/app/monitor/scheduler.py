@@ -161,12 +161,79 @@ def run_pass(db: Session, force_decide: bool = False) -> dict:
             STATE.reconciliation = {"ok": False, "detail": str(exc), "at": now.isoformat()}
         STATE.last_reconcile_at = now
 
+    try:
+        _daily_summary(db, clock)
+    except Exception as exc:  # a summary must never break the pass
+        result["errors"].append({"model": "-", "stage": "summary", "error": str(exc)})
+
     result["ran_at"] = started.isoformat()
     result["duration_ms"] = int((_now() - started).total_seconds() * 1000)
     return result
 
 
+def _daily_summary(db: Session, clock: dict, now: datetime | None = None) -> None:
+    """Once per trading day, after the close: where every model stands, in
+    dollars, and whether the account is concentrated. Sent once — the journal
+    entry of the day is the marker."""
+    from zoneinfo import ZoneInfo
+
+    from app import notify
+    from app.lab import service
+    from app.lab.exposure import account_exposure
+    from app.models import LabEvent
+
+    ny = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("America/New_York"))
+    if clock.get("is_open") or ny.weekday() >= 5 or ny.hour * 60 + ny.minute < 16 * 60 + 10:
+        return
+    today = ny.date().isoformat()
+    live = [m for m in db.scalars(select(Variant).where(Variant.stage == "paper")) if m.portfolio]
+    if not live or not any(m.last_decision_on == today for m in live):
+        return  # not a trading day for us (holiday, or the app was not running at decision time)
+    marker = f"Résumé du {today}"
+    if db.scalar(select(LabEvent).where(LabEvent.kind == "summary", LabEvent.message.like(f"{marker}%"))):
+        return
+
+    cards = [service.serialize(db, m, with_backtest=False) for m in live]
+    total = sum(c["paper"]["equity"] for c in cards)
+    day = sum(c["paper"]["today_usd"] for c in cards)
+    pnl = sum(c["paper"]["pnl_usd"] for c in cards)
+    lines = [f"Total {total:,.0f} $ · aujourd'hui {day:+,.0f} $ · depuis le départ {pnl:+,.0f} $".replace(",", " ")]
+    for c in sorted(cards, key=lambda c: -c["paper"]["today_usd"]):
+        lines.append(f"{c['name']} : {c['paper']['today_usd']:+,.0f} $ ({c['paper']['pnl_usd']:+,.0f} $)".replace(",", " "))
+    missed = [m.name for m in live if m.last_decision_on != today]
+    if missed:
+        lines.append(f"Décision manquée : {', '.join(missed)}")
+    exposure = account_exposure(db)
+    for a in exposure["alerts"]:
+        lines.append(f"Concentration : {a['sector']} = {a['pct']:.0f} % du capital engagé ({a['models']} modèles)")
+    message = "\n".join(lines)
+    runner.journal(db, None, "summary", f"{marker} — {lines[0]}", data={"lines": lines})
+    notify.send(db, f"StockStrat · clôture du {ny.strftime('%d/%m')}", message,
+                priority="high" if exposure["alerts"] or missed else "default", kind="summary",
+                tags=["chart_with_upwards_trend" if day >= 0 else "chart_with_downwards_trend"])
+
+
+def _heartbeat() -> None:
+    """Ping an external dead-man's-switch (healthchecks.io, Uptime Kuma…) if
+    one is configured. It is the only alert that still works when this app,
+    or the whole machine, is down: the external service notices the silence."""
+    import urllib.request
+
+    db = SessionLocal()
+    try:
+        url = str(settings_store.resolve(db, "monitor.heartbeat_url") or "").strip()
+    finally:
+        db.close()
+    if url:
+        try:
+            urllib.request.urlopen(url, timeout=5).read()  # noqa: S310 - URL comes from settings
+        except Exception as exc:
+            log.warning("heartbeat ping failed: %s", exc)
+
+
 def _record(result: dict) -> None:
+    if not result["errors"]:
+        _heartbeat()
     STATE.last_run_at = result["ran_at"]
     STATE.last_duration_ms = result["duration_ms"]
     STATE.last_error = result["errors"][0]["error"] if result["errors"] else None

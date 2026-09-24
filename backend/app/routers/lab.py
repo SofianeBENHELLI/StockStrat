@@ -234,6 +234,12 @@ def overview(db: Session = Depends(get_db)) -> dict:
     }
 
 
+@router.get("/exposure")
+def exposure(db: Session = Depends(get_db)) -> dict:
+    from app.lab.exposure import account_exposure
+    return account_exposure(db)
+
+
 @router.post("/monitor/run-once")
 def monitor_run_once(force_decide: bool = False) -> dict:
     return scheduler.run_once(force_decide=force_decide)

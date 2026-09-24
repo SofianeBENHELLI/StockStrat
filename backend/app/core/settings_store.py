@@ -83,11 +83,39 @@ FIELDS: tuple[Field, ...] = (
           env_attr="quote_refresh_seconds", minimum=10, maximum=3600, unit="s",
           help="Fréquence d'exécution du passage du monitor."),
 
+    Field("monitor.heartbeat_url", "Surveillance externe (URL de ping)", "str", "monitor", default="",
+          help="Facultatif. Une URL appelée à chaque passage réussi (healthchecks.io, Uptime Kuma…). Si "
+               "les appels s'arrêtent — appli plantée, machine éteinte — c'est ce service qui te prévient."),
+
     # ---- Market data (app/data/provider.py) --------------------------------
     Field("data.market_data_provider", "Source des prix", "enum", "data", default="alpaca",
           choices=("alpaca", "mock"),
           help="« alpaca » : dernier trade réel. Sans prix, un ordre est refusé — jamais passé sur un "
                "prix inventé. « mock » : prix fictifs déterministes, pour les tests hors ligne uniquement."),
+
+    # ---- Notifications (app/notify.py) -------------------------------------
+    Field("notify.enabled", "Notifications", "bool", "notify", default=False,
+          help="Envoie sur ton téléphone le résumé du soir, les stops déclenchés et les erreurs."),
+    Field("notify.ntfy_topic", "Sujet ntfy", "secret", "notify",
+          help="Installe l'appli ntfy (gratuite, sans compte) et abonne-toi à ce sujet. Il est public pour qui "
+               "connaît son nom : garde-le secret."),
+    Field("notify.ntfy_server", "Serveur ntfy", "str", "notify", default="https://ntfy.sh",
+          help="Le serveur public par défaut, ou le tien si tu l'héberges."),
+    Field("notify.telegram_bot_token", "Telegram — jeton du bot", "secret", "notify",
+          help="Facultatif. Créé via @BotFather."),
+    Field("notify.telegram_chat_id", "Telegram — identifiant de conversation", "str", "notify", default="",
+          help="Facultatif. L'identifiant de ta conversation avec le bot."),
+    Field("notify.daily_summary", "Résumé du soir", "bool", "notify", default=True,
+          help="Après la clôture de Wall Street : valeur, gain du jour et mouvements de chaque modèle."),
+    Field("notify.on_exits", "Sorties et stops", "bool", "notify", default=True,
+          help="À chaque stop déclenché ou modèle déployé / retiré."),
+    Field("notify.on_errors", "Erreurs", "bool", "notify", default=True,
+          help="Décision impossible, ordre refusé, écart de réconciliation persistant."),
+    Field("notify.on_fills", "Chaque exécution", "bool", "notify", default=False,
+          help="Une notification par ordre exécuté. Bavard : plutôt pour les premiers jours."),
+    Field("risk.sector_alert_pct", "Alerte de concentration", "float", "notify", default=30.0,
+          minimum=5, maximum=100, unit="%",
+          help="Prévient quand un secteur dépasse cette part du capital engagé, tous modèles confondus."),
 
     # ---- Connections -------------------------------------------------------
     Field("connections.alpaca_api_key", "Alpaca paper — identifiant de clé API", "secret", "connections",
@@ -106,6 +134,7 @@ GROUP_LABELS: dict[str, tuple[str, str]] = {
     "execution": ("Exécution", "Qui exécute les ordres, et le plafond d'un ordre unitaire."),
     "monitor": ("Monitor", "La boucle de fond qui sonde les ordres en attente et enregistre l'équité."),
     "data": ("Données de marché", "D'où viennent les prix."),
+    "notify": ("Notifications", "Ce que l'application te dit, sur ton téléphone, quand tu n'es pas devant."),
     "connections": ("Connexions", "Identifiants des services externes. Stockés côté serveur ; jamais "
                                   "renvoyés au navigateur une fois enregistrés."),
 }

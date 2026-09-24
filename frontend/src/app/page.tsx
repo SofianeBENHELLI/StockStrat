@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, CheckCircle2, CircleAlert, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import ExposureCard from "@/components/exposure-card";
 import Journal from "@/components/journal";
 import MarketClock from "@/components/market-clock";
 import Money from "@/components/money";
@@ -12,10 +13,11 @@ import ProfileChip from "@/components/profile-chip";
 import Sparkline from "@/components/sparkline";
 import Stat from "@/components/stat";
 import { api, ApiError } from "@/lib/api";
-import { PROFILE_META, PROFILE_ORDER, pct, usd, type Model, type Overview } from "@/lib/lab";
+import { PROFILE_META, PROFILE_ORDER, pct, usd, type Exposure, type Model, type Overview } from "@/lib/lab";
 
 export default function TradingFloor() {
   const [data, setData] = useState<Overview | null>(null);
+  const [exposure, setExposure] = useState<Exposure | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -23,6 +25,7 @@ export default function TradingFloor() {
     try {
       setData(await api<Overview>("/api/lab/overview"));
       setError(null);
+      setExposure(await api<Exposure>("/api/lab/exposure").catch(() => null));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "API injoignable — le backend tourne-t-il sur le port 8001 ?");
     }
@@ -105,6 +108,7 @@ export default function TradingFloor() {
 
       <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
         <div className="space-y-6">
+          <ExposureCard exposure={exposure} />
           {live.length === 0 ? (
             <Card>
               <CardHeader>
@@ -168,6 +172,7 @@ function LiveCard({ m }: { m: Model }) {
           <div className="text-xs text-muted-foreground">
             {p.positions} position{p.positions > 1 ? "s" : ""}
             {p.open_orders ? ` · ${p.open_orders} ordre${p.open_orders > 1 ? "s" : ""} en attente` : ""}
+            {p.protected ? ` · ${p.protected} stop${p.protected > 1 ? "s" : ""} de secours` : ""}
           </div>
         </div>
         <Sparkline values={p.sparkline} baseline={m.budget} width={90} height={30} />
