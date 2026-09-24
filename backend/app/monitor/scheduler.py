@@ -57,6 +57,8 @@ class MonitorState:
     last_snapshot_at: datetime | None = None
     last_reconcile_at: datetime | None = None
     reconcile_failures: int = 0
+    last_backup_day: str | None = None
+    last_backup: str | None = None
 
 
 STATE = MonitorState()
@@ -165,6 +167,16 @@ def run_pass(db: Session, force_decide: bool = False) -> dict:
         _daily_summary(db, clock)
     except Exception as exc:  # a summary must never break the pass
         result["errors"].append({"model": "-", "stage": "summary", "error": str(exc)})
+
+    day = now.date().isoformat()
+    if STATE.last_backup_day != day:
+        from app.core.backup import backup_now
+        try:
+            target = backup_now()
+            STATE.last_backup_day = day
+            STATE.last_backup = target.name if target else None
+        except Exception as exc:
+            result["errors"].append({"model": "-", "stage": "backup", "error": str(exc)})
 
     result["ran_at"] = started.isoformat()
     result["duration_ms"] = int((_now() - started).total_seconds() * 1000)
@@ -295,5 +307,5 @@ def status() -> dict:
         "running": STATE.running, "enabled": STATE.enabled, "interval_seconds": STATE.interval_seconds,
         "passes": STATE.passes, "last_run_at": STATE.last_run_at, "last_duration_ms": STATE.last_duration_ms,
         "last_error": STATE.last_error, "last_result": STATE.last_result,
-        "clock": STATE.clock, "reconciliation": STATE.reconciliation,
+        "clock": STATE.clock, "reconciliation": STATE.reconciliation, "last_backup": STATE.last_backup,
     }

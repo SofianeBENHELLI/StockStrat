@@ -4,6 +4,9 @@ import os
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "4")
+# Tests encrypt with a throwaway key rather than creating backend/.secret_key.
+from cryptography.fernet import Fernet  # noqa: E402
+os.environ["STOCKSTRAT_SECRET_KEY"] = Fernet.generate_key().decode()
 
 import pytest
 from sqlalchemy import create_engine

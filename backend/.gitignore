@@ -6,3 +6,5 @@ __pycache__/
 app/ml/artifacts/
 .pytest_cache/
 data_cache/
+.secret_key
+backups/

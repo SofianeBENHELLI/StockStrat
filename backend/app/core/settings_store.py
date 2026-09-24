@@ -25,6 +25,7 @@ from typing import Any, Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core import secrets_box
 from app.core.config import get_settings
 from app.models import AppSetting
 
@@ -149,7 +150,29 @@ def _env_default(f: Field) -> Any:
 
 
 def _rows(db: Session) -> dict[str, Any]:
-    return {row.key: (row.value or {}).get("v") for row in db.scalars(select(AppSetting))}
+    """Stored values, secrets decrypted. Never leaves the server as-is: the
+    public view masks secrets, and only server-side callers see this."""
+    out = {}
+    for row in db.scalars(select(AppSetting)):
+        value = (row.value or {}).get("v")
+        field = BY_KEY.get(row.key)
+        out[row.key] = secrets_box.decrypt(value) if field is not None and field.type == "secret" else value
+    return out
+
+
+def encrypt_plaintext_secrets(db: Session) -> int:
+    """One-off migration: secrets stored before encryption existed are
+    encrypted in place. Idempotent."""
+    done = 0
+    for row in db.scalars(select(AppSetting)):
+        field = BY_KEY.get(row.key)
+        value = (row.value or {}).get("v")
+        if field is not None and field.type == "secret" and value and not secrets_box.is_encrypted(value):
+            row.value = {"v": secrets_box.encrypt(str(value))}
+            done += 1
+    if done:
+        db.commit()
+    return done
 
 
 def _coerce(f: Field, raw: Any) -> Any:
@@ -254,6 +277,8 @@ def apply_updates(db: Session, updates: dict[str, Any]) -> list[str]:
                 changed.append(key)
             continue
         value = _coerce(f, raw)
+        if f.type == "secret":
+            value = secrets_box.encrypt(value)
         if row is None:
             db.add(AppSetting(key=key, value={"v": value}))
         else:

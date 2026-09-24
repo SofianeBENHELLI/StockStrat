@@ -114,3 +114,18 @@ def test_notification(db: Session = Depends(get_db)) -> dict:
     if not delivered:
         raise HTTPException(status_code=502, detail="aucun canal n'a accepté le message (sujet ntfy ou Telegram manquant ?)")
     return {"delivered": delivered}
+
+
+@router.get("/backups")
+def backups() -> list[dict]:
+    from app.core.backup import list_backups
+    return list_backups()
+
+
+@router.post("/backups")
+def backup_now() -> dict:
+    from app.core.backup import backup_now as run
+    target = run()
+    if target is None:
+        raise HTTPException(status_code=409, detail="pas de base SQLite sur disque à sauvegarder")
+    return {"name": target.name}

@@ -55,6 +55,25 @@ def init_db() -> None:
     _ensure_column("paper_orders", "stop_price", "FLOAT")
     _ensure_column("paper_orders", "time_in_force", "TEXT DEFAULT 'day'")
     _ensure_column("paper_orders", "purpose", "TEXT DEFAULT 'trade'")
+    _secure_storage()
+
+
+def _secure_storage() -> None:
+    """Encrypt any secret still stored in clear, and make the database file
+    readable by its owner only."""
+    from pathlib import Path
+
+    from app.core import secrets_box, settings_store
+
+    db = SessionLocal()
+    try:
+        settings_store.encrypt_plaintext_secrets(db)
+    finally:
+        db.close()
+    url = _settings.database_url
+    if url.startswith("sqlite:///") and ":memory:" not in url:
+        path = Path(url.removeprefix("sqlite:///"))
+        secrets_box.restrict(path if path.is_absolute() else Path.cwd() / path)
 
 
 def get_db() -> Generator[Session, None, None]:
