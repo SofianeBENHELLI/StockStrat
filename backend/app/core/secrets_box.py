@@ -23,9 +23,11 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from app.core.paths import DATA_DIR
+
 log = logging.getLogger("secrets")
 PREFIX = "enc:v1:"
-KEY_FILE = Path(__file__).resolve().parents[2] / ".secret_key"
+KEY_FILE = DATA_DIR / ".secret_key"
 
 
 def restrict(path: Path) -> None:

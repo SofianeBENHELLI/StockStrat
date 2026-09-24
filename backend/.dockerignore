@@ -1,0 +1,10 @@
+.venv
+__pycache__
+*.db
+*.db-*
+.secret_key
+backups
+data_cache
+.pytest_cache
+tests
+scripts

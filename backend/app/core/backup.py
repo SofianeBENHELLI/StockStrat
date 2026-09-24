@@ -15,9 +15,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.core.paths import BACKEND_DIR, DATA_DIR
 from app.core.secrets_box import restrict
 
-BACKUP_DIR = Path(__file__).resolve().parents[2] / "backups"
+BACKUP_DIR = DATA_DIR / "backups"
 KEEP = 14
 
 
@@ -27,7 +28,7 @@ def _db_path() -> Path | None:
         return None
     raw = url.removeprefix("sqlite:///")
     path = Path(raw)
-    return path if path.is_absolute() else (Path(__file__).resolve().parents[2] / raw).resolve()
+    return path if path.is_absolute() else (BACKEND_DIR / raw).resolve()
 
 
 def backup_now(dest: Path = BACKUP_DIR, keep: int = KEEP) -> Path | None:

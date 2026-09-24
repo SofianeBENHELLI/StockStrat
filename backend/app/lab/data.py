@@ -23,8 +23,9 @@ import pandas as pd
 
 from app.core import settings_store
 from app.core.db import SessionLocal
+from app.core.paths import DATA_DIR
 
-CACHE_DIR = Path(__file__).resolve().parents[2] / "data_cache"
+CACHE_DIR = DATA_DIR / "data_cache"
 HISTORY_START = date(2015, 6, 1)
 FIELDS = ("open", "high", "low", "close", "volume")
 

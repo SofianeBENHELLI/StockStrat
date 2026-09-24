@@ -1,0 +1,70 @@
+# StockStrat on a server.
+#
+#   cp .env.server.example .env      # then fill STOCKSTRAT_SECRET_KEY (and TS_AUTHKEY for Tailscale)
+#   docker compose up -d --build                         # interface on 127.0.0.1:3001 of the server
+#   docker compose --profile tailscale up -d --build     # + private access from your phone via Tailscale
+#
+# Nothing listens on a public interface: the interface is bound to the
+# server's localhost, and remote access goes through Tailscale only.
+x-env: &env
+  STOCKSTRAT_DATA_DIR: /data
+  DATABASE_URL: sqlite:////data/stockstrat.db
+  # Required: without it the stored credentials could not be decrypted.
+  STOCKSTRAT_SECRET_KEY: ${STOCKSTRAT_SECRET_KEY:?set STOCKSTRAT_SECRET_KEY in .env (see .env.server.example)}
+  ALPACA_API_KEY: ${ALPACA_API_KEY:-}
+  ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
+
+x-backend: &backend
+  build: ./backend
+  restart: unless-stopped
+  environment: *env
+  volumes:
+    - stockstrat-data:/data
+
+services:
+  api:
+    <<: *backend
+    environment:
+      <<: *env
+      RUN_SCHEDULER: "0"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://api:8001
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3001}:3001"
+    depends_on:
+      - api
+
+  tailscale:
+    profiles: ["tailscale"]
+    image: tailscale/tailscale:stable
+    hostname: stockstrat
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./ops/tailscale:/config:ro
+
+volumes:
+  stockstrat-data:
+  tailscale-state:

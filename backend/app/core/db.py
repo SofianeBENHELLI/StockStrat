@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import get_settings
@@ -20,6 +20,19 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
+if engine.dialect.name == "sqlite":
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record) -> None:
+        """Two processes share this file — the API and the decision worker.
+        WAL lets readers proceed while one writes, and busy_timeout makes a
+        writer wait for the lock instead of failing with "database is locked"."""
+        cur = dbapi_conn.cursor()
+        if ":memory:" not in _settings.database_url:
+            cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=10000")
+        cur.close()
+
+
 def _ensure_column(table: str, column: str, ddl_type: str) -> None:
     """No Alembic in this project — `create_all()` only creates missing
     tables, never adds columns to ones that already exist. This is a tiny
@@ -29,7 +42,10 @@ def _ensure_column(table: str, column: str, ddl_type: str) -> None:
         return
     with engine.connect() as conn:
         existing = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
-        if column not in existing:
+        # A table that no longer exists (legacy tables of the old tournament, on
+        # a fresh install) has nothing to migrate. Without this check a brand
+        # new database could not even start.
+        if existing and column not in existing:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"))
             conn.commit()
 

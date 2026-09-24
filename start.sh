@@ -46,7 +46,7 @@ if [ "${DEV:-0}" = "1" ]; then
 else
   # Recompile the interface only if its sources changed since the last build.
   if [ ! -f "$FRONTEND/.next/BUILD_ID" ] || \
-     [ -n "$(find "$FRONTEND/src" "$FRONTEND/next.config.ts" "$FRONTEND/package.json" -newer "$FRONTEND/.next/BUILD_ID" -print -quit)" ]; then
+     [ -n "$(find "$FRONTEND/src" "$FRONTEND/next.config.mjs" "$FRONTEND/package.json" -newer "$FRONTEND/.next/BUILD_ID" -print -quit)" ]; then
     echo "Compilation de l'interface…"
     (cd "$FRONTEND" && npm run build >>"$LOGS/build.log" 2>&1) || { echo "Échec de compilation, voir $LOGS/build.log"; exit 1; }
   fi

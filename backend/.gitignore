@@ -8,3 +8,5 @@ app/ml/artifacts/
 data_cache/
 .secret_key
 backups/
+*.db-wal
+*.db-shm
