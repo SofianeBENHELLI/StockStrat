@@ -158,3 +158,25 @@ def test_a_reconciliation_gap_is_reported_only_if_it_persists(db, market, monkey
     scheduler.run_pass(db)          # a gap again...
     scheduler.run_pass(db)          # ...that survives the re-check
     assert errors() == 1
+
+
+def test_only_one_process_can_claim_a_model_decision(db, market):
+    """Two passes racing in the decision window: the second claim must lose."""
+    m = _stratege(db)
+    assert scheduler._claim(db, m, "2026-09-25") is True
+    assert scheduler._claim(db, m, "2026-09-25") is False
+    assert scheduler._claim(db, m, "2026-09-26") is True
+
+
+def test_a_skipped_decision_releases_its_claim(db, market):
+    m = _stratege(db)
+    service.promote(db, m)
+    m.last_decision_on = None
+    db.add(PaperOrder(portfolio_id=m.portfolio.id, symbol="XLE", side="buy", qty=1, status="open",
+                      broker="sim", broker_order_id="sim-x", order_type="limit", limit_price=0.01))
+    db.commit()
+    market["clock"].update(is_open=True,
+                           next_close=(datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat())
+    scheduler.run_pass(db)
+    db.refresh(m)
+    assert m.last_decision_on is None     # pending order: skipped, and free to retry next pass

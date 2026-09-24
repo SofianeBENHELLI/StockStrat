@@ -75,6 +75,28 @@ def _minutes_to_close(clock: dict) -> float | None:
     return (datetime.fromisoformat(clock["next_close"]) - _now()).total_seconds() / 60
 
 
+def _claim(db: Session, m: Variant, today: str) -> bool:
+    """Reserve today's decision for this model, atomically.
+
+    The loop runs in the worker, but a pass can also be triggered from the API
+    (the "Actualiser" button). Two processes checking "already decided today?"
+    at the same moment would both answer no and both trade. A conditional
+    UPDATE lets exactly one of them win."""
+    from sqlalchemy import or_, update
+
+    won = db.execute(update(Variant).where(
+        Variant.id == m.id, or_(Variant.last_decision_on.is_(None), Variant.last_decision_on != today),
+    ).values(last_decision_on=today)).rowcount
+    db.commit()
+    db.refresh(m)
+    return won == 1
+
+
+def _release(db: Session, m: Variant, previous: str | None) -> None:
+    m.last_decision_on = previous
+    db.commit()
+
+
 def _journal_fills(db: Session, m: Variant, changed) -> None:
     for o in changed:
         if o.status in ("filled", "partial_fill") and o.purpose == "safety_stop":
@@ -116,13 +138,17 @@ def run_pass(db: Session, force_decide: bool = False) -> dict:
     if force_decide or (to_close is not None and to_close <= window):
         today = runner.session_date().date().isoformat()
         for m in live:
-            if m.last_decision_on == today and not force_decide:
-                continue
+            previous = m.last_decision_on
+            if not force_decide and not _claim(db, m, today):
+                continue  # already decided today — by this process or another one
             try:
                 p = runner.decide_and_execute(db, m, market_open=bool(clock.get("is_open")))
+                if p.skipped:
+                    _release(db, m, previous)  # nothing was done: let a later pass retry
                 result["decided"].append({"model": m.name, "orders": len(p.orders), "skipped": p.skipped})
             except Exception as exc:
                 db.rollback()
+                _release(db, m, previous)
                 runner.journal(db, m, "error", f"Décision impossible : {exc}")
                 result["errors"].append({"model": m.name, "stage": "decide", "error": str(exc)})
 
@@ -243,6 +269,30 @@ def _heartbeat() -> None:
             log.warning("heartbeat ping failed: %s", exc)
 
 
+STATUS_KEY = "runtime.monitor"
+
+
+def _persist_status() -> None:
+    """Write the loop's status where the API can read it. The loop normally
+    runs in its own process (app/worker.py); without this, the API — a
+    different process — would report a loop that never ran."""
+    from app.models import AppSetting
+
+    db = SessionLocal()
+    try:
+        row = db.get(AppSetting, STATUS_KEY)
+        snapshot = {**_status_dict(), "heartbeat_at": _now().isoformat()}
+        if row is None:
+            db.add(AppSetting(key=STATUS_KEY, value={"v": snapshot}))
+        else:
+            row.value = {"v": snapshot}
+        db.commit()
+    except Exception as exc:
+        log.warning("could not persist monitor status: %s", exc)
+    finally:
+        db.close()
+
+
 def _record(result: dict) -> None:
     if not result["errors"]:
         _heartbeat()
@@ -252,6 +302,7 @@ def _record(result: dict) -> None:
     STATE.passes += 1
     STATE.last_result = {"decided": len(result["decided"]), "fills": result["fills"],
                          "snapshots": result["snapshots"], "errors": len(result["errors"])}
+    _persist_status()
 
 
 def run_once(force_decide: bool = False) -> dict:
@@ -303,6 +354,31 @@ async def stop() -> None:
 
 
 def status() -> dict:
+    """The loop's status: from this process if the loop runs here, otherwise
+    from the last snapshot the worker process wrote, with its age — a stale
+    heartbeat means the worker is down."""
+    if STATE.running:
+        return _status_dict()
+    from app.models import AppSetting
+
+    db = SessionLocal()
+    try:
+        row = db.get(AppSetting, STATUS_KEY)
+    finally:
+        db.close()
+    if row is None:
+        return {**_status_dict(), "running": False, "process": "none"}
+    snap = dict((row.value or {}).get("v") or {})
+    beat = snap.get("heartbeat_at")
+    age = (_now() - datetime.fromisoformat(beat)).total_seconds() if beat else None
+    interval = int(snap.get("interval_seconds") or 60)
+    snap["running"] = age is not None and age < max(3 * interval, 180)
+    snap["heartbeat_age_s"] = round(age) if age is not None else None
+    snap["process"] = "worker"
+    return snap
+
+
+def _status_dict() -> dict:
     return {
         "running": STATE.running, "enabled": STATE.enabled, "interval_seconds": STATE.interval_seconds,
         "passes": STATE.passes, "last_run_at": STATE.last_run_at, "last_duration_ms": STATE.last_duration_ms,

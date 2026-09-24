@@ -17,14 +17,22 @@ from app.routers import lab, settings as settings_router
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(os.cpu_count() or 4))
 
 
+# The decision loop runs inside the API by default (one process, simplest for
+# development). In production it runs as its own process — `python -m
+# app.worker` — and the API is started with RUN_SCHEDULER=0.
+RUN_SCHEDULER = os.environ.get("RUN_SCHEDULER", "1") != "0"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    await scheduler.start()
+    if RUN_SCHEDULER:
+        await scheduler.start()
     try:
         yield
     finally:
-        await scheduler.stop()
+        if RUN_SCHEDULER:
+            await scheduler.stop()
 
 
 app = FastAPI(title="StockStrat Lab API", version="0.2.0", lifespan=lifespan)
