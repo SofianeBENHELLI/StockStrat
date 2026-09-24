@@ -14,8 +14,12 @@ voir si ce qu'ils promettaient en backtest tient face au marché.
 
 Puis ouvrir <http://localhost:3001>. Au premier lancement : **Administration → Connexions**,
 coller l'identifiant et la clé secrète **paper** d'Alpaca, puis « Tester la connexion ».
-Le script garde le Mac éveillé tant qu'il tourne : les modèles décident chaque jour
-vers 21h45 (heure de Paris), et un Mac en veille ne décide rien.
+Les modèles décident chaque jour vers 21h45 (heure de Paris) : le script garde le Mac
+éveillé tant qu'il tourne. Pour une appli qui tourne vraiment en continu — sur un petit
+serveur, accessible depuis ton téléphone — voir **[DEPLOY.md](DEPLOY.md)**.
+
+Pour recevoir le résumé du soir et les alertes sur ton téléphone : **Administration →
+Notifications**, installer l'appli ntfy et s'abonner au sujet.
 
 ## Le cycle
 
@@ -88,6 +92,11 @@ quasiment aucune combinaison ne bat le placebo.
 
 ## Paper trading
 
+- **Un stop de secours chez Alpaca sur chaque position.** Les stops des modèles sont
+  vérifiés à la clôture par l'application, comme dans le backtest — mais seulement quand
+  elle tourne. Chaque position garde donc aussi, chez Alpaca, un ordre stop permanent
+  (25 % sous le prix d'achat par défaut) qui protège même application éteinte. Actions
+  entières seulement : Alpaca ne pose pas de stop permanent sur une fraction.
 - **Un compte Alpaca, une sous-comptabilité par modèle.** Chaque ordre appartient à un
   modèle et porte son étiquette (`ss-m<modèle>-o<ordre>`, visible dans le tableau de bord
   Alpaca). Alpaca ne voit qu'une position par titre ; la **réconciliation** vérifie toutes
@@ -98,7 +107,26 @@ quasiment aucune combinaison ne bat le placebo.
   l'équivalent réel de la clôture du backtest. Aucune décision tant qu'un ordre est en attente
   (il serait acheté deux fois).
 - **Des prix Alpaca ou rien.** Sans prix, un ordre est refusé — jamais passé sur un prix inventé.
-- **Journal de bord** : chaque décision, ordre, exécution, sortie et erreur, en clair.
+- **Journal de bord** : chaque décision, ordre, exécution, sortie et erreur, en clair —
+  et sur ton téléphone (ntfy ou Telegram) : résumé du soir, stops, erreurs.
+- **Exposition du compte** : ce que tous les modèles détiennent ensemble, par secteur,
+  avec une alerte au-dessus de 30 %. Neuf modèles ne font pas neuf paris : le premier
+  soir, cinq d'entre eux mettaient ensemble 39 % du capital dans les semi-conducteurs.
+- **La boucle de retour** : le coût d'exécution réel de chaque ordre (le chiffre que tous
+  les backtests supposent à 5 pb), l'écart entre le paper et le backtest rejoué sur les
+  mêmes jours, et des suggestions factuelles — par exemple re-backtester avec le coût mesuré.
+
+## Sécurité et exploitation
+
+- Identifiants chiffrés en base, avec une clé stockée à part (`backend/.secret_key` ou
+  `STOCKSTRAT_SECRET_KEY`) ; base et clé lisibles par ton seul compte.
+- Sauvegarde quotidienne de la base, 14 jours conservés.
+- Schéma géré par des migrations Alembic.
+- La boucle de décision tourne dans son propre processus (`python -m app.worker`) :
+  redémarrer l'interface ne l'interrompt pas. Une décision est réservée en base avant
+  d'être prise, pour qu'elle ne puisse jamais être prise deux fois.
+- Intégration continue sur GitHub : tests, types, compilation, audit des dépendances,
+  images Docker.
 
 ## Architecture
 
@@ -106,19 +134,27 @@ quasiment aucune combinaison ne bat le placebo.
 backend/app/
   lab/            profils, moteur, backtest, métriques en $, runner paper, optimiseur, données Alpaca
   paper/          port broker (simulateur, Alpaca paper), comptabilité, garde-fous pré-trade, réconciliation
-  monitor/        la boucle : sondage des ordres, décisions, relevés d'équité, réconciliation
+  monitor/        la boucle : sondage des ordres, décisions, relevés d'équité, réconciliation, résumé, sauvegarde
+  worker.py       la boucle comme processus autonome
+  notify.py       notifications (ntfy, Telegram)
+  core/           réglages, chiffrement des secrets, sauvegardes, base et migrations
   routers/        API (/api/lab, /api/settings)
+backend/migrations/ migrations Alembic
 frontend/src/app/ salle des marchés, laboratoire, page modèle, optimiseur, classement, page paper, administration
 ```
 
-Tests : `cd backend && .venv/bin/python -m pytest` (57 tests, dont le test d'empoisonnement
-du Matheux et le cycle de vie complet d'un modèle).
+Tests : `cd backend && .venv/bin/python -m pytest` (98 tests : empoisonnement du Matheux,
+cycle de vie d'un modèle, stop de secours, notifications, chiffrement, migrations, démarrages
+concurrents…). Test de bout en bout contre le vrai compte : `backend/scripts/smoke_e2e.py`.
 
 ## Limites connues
 
 - Biais du survivant sur l'univers actions (affiché, mesuré par le placebo, pas corrigé).
 - Pas d'options : les profils tradent des actions et des ETF, en achat seul.
 - Pas de flux d'actualités ni de calendrier de résultats : les signaux sont prix et volume uniquement.
-- L'application tourne sur le Mac : s'il est éteint à l'heure de décision, la décision du jour est sautée.
+- Sur le Mac, un Mac éteint ou capot fermé à 21h45 saute la décision du jour (les stops de
+  secours chez Alpaca, eux, tiennent). Le serveur de DEPLOY.md règle ce point.
+- Coûts de transaction : 5 pb supposés tant que la boucle de retour n'a pas mesuré au moins
+  dix exécutions en séance.
 - Pas de trading réel : c'est l'étape suivante, et elle demandera sa propre classe de broker,
   ses propres clés et un armement explicite.
